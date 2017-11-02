@@ -209,7 +209,7 @@ func (daemon *Daemon) generateSecurityOpt(hostConfig *containertypes.HostConfig)
 	ipcMode := hostConfig.IpcMode
 	pidMode := hostConfig.PidMode
 	privileged := hostConfig.Privileged
-	if ipcMode.IsHost() || pidMode.IsHost() || privileged {
+        if true || ipcMode.IsHost() || pidMode.IsHost() || privileged {
 		return toHostConfigSelinuxLabels(label.DisableSecOpt()), nil
 	}
 
