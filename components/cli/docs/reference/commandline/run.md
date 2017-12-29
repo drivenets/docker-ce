@@ -240,7 +240,7 @@ For the `devicemapper`, `btrfs`, `windowsfilter` and `zfs` graph drivers,
 user cannot pass a size less than the Default BaseFS Size.
 For the `overlay2` storage driver, the size option is only available if the
 backing fs is `xfs` and mounted with the `pquota` mount option.
-Under these conditions, user can pass any size less then the backing fs size.
+Under these conditions, user can pass any size less than the backing fs size.
 
 ### Mount tmpfs (--tmpfs)
 
@@ -588,11 +588,11 @@ Use Docker's `--restart` to specify a container's *restart policy*. A restart
 policy controls whether the Docker daemon restarts a container after exit.
 Docker supports the following restart policies:
 
-| Policy    | Result                                                                                                                                                                                                                                                           |
-|:----------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `no`      | Do not automatically restart the container when it exits. This is the default.                                                                                                                                                                                   |
-| `failure` | Restart only if the container exits with a non-zero exit status. Optionally, limit the number of restart retries the Docker daemon attempts.                                                                                                                     |
-| `always`  | Always restart the container regardless of the exit status. When you specify always, the Docker daemon will try to restart the container indefinitely. The container will also always start on daemon startup, regardless of the current state of the container. |
+| Policy                     | Result                                                                                                                                                                                                                                                           |
+|:---------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `no`                       | Do not automatically restart the container when it exits. This is the default.                                                                                                                                                                                   |
+| `on-failure[:max-retries]` | Restart only if the container exits with a non-zero exit status. Optionally, limit the number of restart retries the Docker daemon attempts.                                                                                                                     |
+| `always`                   | Always restart the container regardless of the exit status. When you specify always, the Docker daemon will try to restart the container indefinitely. The container will also always start on daemon startup, regardless of the current state of the container. |
 
 ```bash
 $ docker run --restart=always redis

@@ -222,23 +222,30 @@ func (opts updateOptions) rollbackConfig(flags *pflag.FlagSet) *swarm.UpdateConf
 }
 
 type resourceOptions struct {
-	limitCPU      opts.NanoCPUs
-	limitMemBytes opts.MemBytes
-	resCPU        opts.NanoCPUs
-	resMemBytes   opts.MemBytes
+	limitCPU            opts.NanoCPUs
+	limitMemBytes       opts.MemBytes
+	resCPU              opts.NanoCPUs
+	resMemBytes         opts.MemBytes
+	resGenericResources []string
 }
 
-func (r *resourceOptions) ToResourceRequirements() *swarm.ResourceRequirements {
+func (r *resourceOptions) ToResourceRequirements() (*swarm.ResourceRequirements, error) {
+	generic, err := ParseGenericResources(r.resGenericResources)
+	if err != nil {
+		return nil, err
+	}
+
 	return &swarm.ResourceRequirements{
 		Limits: &swarm.Resources{
 			NanoCPUs:    r.limitCPU.Value(),
 			MemoryBytes: r.limitMemBytes.Value(),
 		},
 		Reservations: &swarm.Resources{
-			NanoCPUs:    r.resCPU.Value(),
-			MemoryBytes: r.resMemBytes.Value(),
+			NanoCPUs:         r.resCPU.Value(),
+			MemoryBytes:      r.resMemBytes.Value(),
+			GenericResources: generic,
 		},
-	}
+	}, nil
 }
 
 type restartPolicyOptions struct {
@@ -505,6 +512,8 @@ type serviceOptions struct {
 	healthcheck healthCheckOptions
 	secrets     opts.SecretOpt
 	configs     opts.ConfigOpt
+
+	isolation string
 }
 
 func newServiceOptions() *serviceOptions {
@@ -586,6 +595,11 @@ func (options *serviceOptions) ToService(ctx context.Context, apiClient client.N
 		return service, err
 	}
 
+	resources, err := options.resources.ToResourceRequirements()
+	if err != nil {
+		return service, err
+	}
+
 	service = swarm.ServiceSpec{
 		Annotations: swarm.Annotations{
 			Name:   options.name,
@@ -614,9 +628,10 @@ func (options *serviceOptions) ToService(ctx context.Context, apiClient client.N
 				Hosts:           convertExtraHostsToSwarmHosts(options.hosts.GetAll()),
 				StopGracePeriod: options.ToStopGracePeriod(flags),
 				Healthcheck:     healthConfig,
+				Isolation:       container.Isolation(options.isolation),
 			},
 			Networks:      networks,
-			Resources:     options.resources.ToResourceRequirements(),
+			Resources:     resources,
 			RestartPolicy: options.restartPolicy.ToRestartPolicy(flags),
 			Placement: &swarm.Placement{
 				Constraints: options.constraints.GetAll(),
@@ -784,6 +799,8 @@ func addServiceFlags(flags *pflag.FlagSet, opts *serviceOptions, defaultFlagValu
 
 	flags.StringVar(&opts.stopSignal, flagStopSignal, "", "Signal to stop the container")
 	flags.SetAnnotation(flagStopSignal, "version", []string{"1.28"})
+	flags.StringVar(&opts.isolation, flagIsolation, "", "Service container isolation mode")
+	flags.SetAnnotation(flagIsolation, "version", []string{"1.35"})
 }
 
 const (
@@ -813,6 +830,8 @@ const (
 	flagEnvFile                 = "env-file"
 	flagEnvRemove               = "env-rm"
 	flagEnvAdd                  = "env-add"
+	flagGenericResourcesRemove  = "generic-resource-rm"
+	flagGenericResourcesAdd     = "generic-resource-add"
 	flagGroup                   = "group"
 	flagGroupAdd                = "group-add"
 	flagGroupRemove             = "group-rm"
@@ -879,4 +898,5 @@ const (
 	flagConfig                  = "config"
 	flagConfigAdd               = "config-add"
 	flagConfigRemove            = "config-rm"
+	flagIsolation               = "isolation"
 )

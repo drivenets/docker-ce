@@ -96,6 +96,7 @@ func (s *containerRouter) getContainersLogs(ctx context.Context, w http.Response
 		Follow:     httputils.BoolValue(r, "follow"),
 		Timestamps: httputils.BoolValue(r, "timestamps"),
 		Since:      r.Form.Get("since"),
+		Until:      r.Form.Get("until"),
 		Tail:       r.Form.Get("tail"),
 		ShowStdout: stdout,
 		ShowStderr: stderr,
@@ -592,7 +593,11 @@ func (s *containerRouter) wsContainersAttach(ctx context.Context, w http.Respons
 	close(done)
 	select {
 	case <-started:
-		logrus.Errorf("Error attaching websocket: %s", err)
+		if err != nil {
+			logrus.Errorf("Error attaching websocket: %s", err)
+		} else {
+			logrus.Debug("websocket connection was closed by client")
+		}
 		return nil
 	default:
 	}

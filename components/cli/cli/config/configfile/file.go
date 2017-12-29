@@ -44,6 +44,7 @@ type ConfigFile struct {
 	NodesFormat          string                      `json:"nodesFormat,omitempty"`
 	PruneFilters         []string                    `json:"pruneFilters,omitempty"`
 	Proxies              map[string]ProxyConfig      `json:"proxies,omitempty"`
+	Experimental         string                      `json:"experimental,omitempty"`
 }
 
 // ProxyConfig contains proxy configuration settings
@@ -177,7 +178,7 @@ func (configFile *ConfigFile) Save() error {
 	return configFile.SaveToWriter(f)
 }
 
-// ParseProxyConfig computes proxy configuration by retreiving the config for the provided host and
+// ParseProxyConfig computes proxy configuration by retrieving the config for the provided host and
 // then checking this against any environment variables provided to the container
 func (configFile *ConfigFile) ParseProxyConfig(host string, runOpts []string) map[string]*string {
 	var cfgKey string

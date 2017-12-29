@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/containerd/containerd"
+	"github.com/containerd/containerd/cio"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -82,6 +83,8 @@ type Backend interface {
 
 // Client provides access to containerd features.
 type Client interface {
+	Version(ctx context.Context) (containerd.Version, error)
+
 	Restore(ctx context.Context, containerID string, attachStdio StdioCallback) (alive bool, pid int, err error)
 
 	Create(ctx context.Context, containerID string, spec *specs.Spec, runtimeOptions interface{}) error
@@ -104,7 +107,7 @@ type Client interface {
 }
 
 // StdioCallback is called to connect a container or process stdio.
-type StdioCallback func(*IOPipe) (containerd.IO, error)
+type StdioCallback func(*IOPipe) (cio.IO, error)
 
 // IOPipe contains the stdio streams.
 type IOPipe struct {
@@ -114,7 +117,7 @@ type IOPipe struct {
 	Terminal bool // Whether stderr is connected on Windows
 
 	cancel context.CancelFunc
-	config containerd.IOConfig
+	config cio.Config
 }
 
 // ServerVersion contains version information as retrieved from the

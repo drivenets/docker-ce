@@ -8,17 +8,16 @@ import (
 	"io"
 	goruntime "runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/containerd/containerd/api/services/tasks/v1"
 	"github.com/containerd/containerd/api/types"
+	"github.com/containerd/containerd/cio"
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/diff"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/plugin"
 	"github.com/containerd/containerd/rootfs"
@@ -26,7 +25,6 @@ import (
 	google_protobuf "github.com/gogo/protobuf/types"
 	digest "github.com/opencontainers/go-digest"
 	"github.com/opencontainers/image-spec/specs-go/v1"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
@@ -51,6 +49,7 @@ type Status struct {
 	ExitTime time.Time
 }
 
+// ProcessInfo provides platform specific process information
 type ProcessInfo struct {
 	// Pid is the process ID
 	Pid uint32
@@ -124,7 +123,7 @@ type Task interface {
 	// Resume the execution of the task
 	Resume(context.Context) error
 	// Exec creates a new process inside the task
-	Exec(context.Context, string, *specs.Process, IOCreation) (Process, error)
+	Exec(context.Context, string, *specs.Process, cio.Creation) (Process, error)
 	// Pids returns a list of system specific process ids inside the task
 	Pids(context.Context) ([]ProcessInfo, error)
 	// Checkpoint serializes the runtime and memory information of a task into an
@@ -135,7 +134,7 @@ type Task interface {
 	// Update modifies executing tasks with updated settings
 	Update(context.Context, ...UpdateTaskOpts) error
 	// LoadProcess loads a previously created exec'd process
-	LoadProcess(context.Context, string, IOAttach) (Process, error)
+	LoadProcess(context.Context, string, cio.Attach) (Process, error)
 	// Metrics returns task metrics for runtime specific metrics
 	//
 	// The metric types are generic to containerd and change depending on the runtime
@@ -149,11 +148,9 @@ var _ = (Task)(&task{})
 type task struct {
 	client *Client
 
-	io  IO
+	io  cio.IO
 	id  string
 	pid uint32
-
-	mu sync.Mutex
 }
 
 // Pid returns the pid or process id for the task
@@ -176,13 +173,14 @@ func (t *task) Start(ctx context.Context) error {
 func (t *task) Kill(ctx context.Context, s syscall.Signal, opts ...KillOpts) error {
 	var i KillInfo
 	for _, o := range opts {
-		if err := o(ctx, t, &i); err != nil {
+		if err := o(ctx, &i); err != nil {
 			return err
 		}
 	}
 	_, err := t.client.TaskService().Kill(ctx, &tasks.KillRequest{
 		Signal:      uint32(s),
 		ContainerID: t.id,
+		ExecID:      i.ExecID,
 		All:         i.All,
 	})
 	if err != nil {
@@ -279,7 +277,7 @@ func (t *task) Delete(ctx context.Context, opts ...ProcessDeleteOpts) (*ExitStat
 	return &ExitStatus{code: r.ExitStatus, exitedAt: r.ExitedAt}, nil
 }
 
-func (t *task) Exec(ctx context.Context, id string, spec *specs.Process, ioCreate IOCreation) (Process, error) {
+func (t *task) Exec(ctx context.Context, id string, spec *specs.Process, ioCreate cio.Creation) (_ Process, err error) {
 	if id == "" {
 		return nil, errors.Wrapf(errdefs.ErrInvalidArgument, "exec id must not be empty")
 	}
@@ -287,6 +285,12 @@ func (t *task) Exec(ctx context.Context, id string, spec *specs.Process, ioCreat
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil && i != nil {
+			i.Cancel()
+			i.Close()
+		}
+	}()
 	any, err := typeurl.MarshalAny(spec)
 	if err != nil {
 		return nil, err
@@ -344,7 +348,7 @@ func (t *task) CloseIO(ctx context.Context, opts ...IOCloserOpts) error {
 	return errdefs.FromGRPC(err)
 }
 
-func (t *task) IO() IO {
+func (t *task) IO() cio.IO {
 	return t.io
 }
 
@@ -358,6 +362,12 @@ func (t *task) Resize(ctx context.Context, w, h uint32) error {
 }
 
 func (t *task) Checkpoint(ctx context.Context, opts ...CheckpointTaskOpts) (Image, error) {
+	ctx, done, err := t.client.WithLease(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+
 	request := &tasks.CheckpointTaskRequest{
 		ContainerID: t.id,
 	}
@@ -391,15 +401,6 @@ func (t *task) Checkpoint(ctx context.Context, opts ...CheckpointTaskOpts) (Imag
 	index := v1.Index{
 		Annotations: make(map[string]string),
 	}
-	// make sure we clear the gc root labels reguardless of success
-	var clearRoots []ocispec.Descriptor
-	defer func() {
-		for _, r := range append(index.Manifests, clearRoots...) {
-			if err := clearRootGCLabel(ctx, t.client, r); err != nil {
-				log.G(ctx).WithError(err).WithField("dgst", r.Digest).Warnf("failed to remove root marker")
-			}
-		}
-	}()
 	if err := t.checkpointTask(ctx, &index, request); err != nil {
 		return nil, err
 	}
@@ -418,7 +419,6 @@ func (t *task) Checkpoint(ctx context.Context, opts ...CheckpointTaskOpts) (Imag
 	if err != nil {
 		return nil, err
 	}
-	clearRoots = append(clearRoots, desc)
 	im := images.Image{
 		Name:   i.Name,
 		Target: desc,
@@ -465,7 +465,7 @@ func (t *task) Update(ctx context.Context, opts ...UpdateTaskOpts) error {
 	return errdefs.FromGRPC(err)
 }
 
-func (t *task) LoadProcess(ctx context.Context, id string, ioAttach IOAttach) (Process, error) {
+func (t *task) LoadProcess(ctx context.Context, id string, ioAttach cio.Attach) (Process, error) {
 	response, err := t.client.TaskService().Get(ctx, &tasks.GetRequest{
 		ContainerID: t.id,
 		ExecID:      id,
@@ -477,7 +477,7 @@ func (t *task) LoadProcess(ctx context.Context, id string, ioAttach IOAttach) (P
 		}
 		return nil, err
 	}
-	var i IO
+	var i cio.IO
 	if ioAttach != nil {
 		if i, err = attachExistingIO(response, ioAttach); err != nil {
 			return nil, err
@@ -534,9 +534,6 @@ func (t *task) checkpointTask(ctx context.Context, index *v1.Index, request *tas
 func (t *task) checkpointRWSnapshot(ctx context.Context, index *v1.Index, snapshotterName string, id string) error {
 	opts := []diff.Opt{
 		diff.WithReference(fmt.Sprintf("checkpoint-rw-%s", id)),
-		diff.WithLabels(map[string]string{
-			"containerd.io/gc.root": time.Now().UTC().Format(time.RFC3339),
-		}),
 	}
 	rw, err := rootfs.Diff(ctx, id, t.client.SnapshotService(snapshotterName), t.client.DiffService(), opts...)
 	if err != nil {
@@ -563,9 +560,7 @@ func (t *task) checkpointImage(ctx context.Context, index *v1.Index, image strin
 }
 
 func (t *task) writeIndex(ctx context.Context, index *v1.Index) (d v1.Descriptor, err error) {
-	labels := map[string]string{
-		"containerd.io/gc.root": time.Now().UTC().Format(time.RFC3339),
-	}
+	labels := map[string]string{}
 	for i, m := range index.Manifests {
 		labels[fmt.Sprintf("containerd.io/gc.ref.content.%d", i)] = m.Digest.String()
 	}
@@ -594,10 +589,4 @@ func writeContent(ctx context.Context, store content.Store, mediaType, ref strin
 		Digest:    writer.Digest(),
 		Size:      size,
 	}, nil
-}
-
-func clearRootGCLabel(ctx context.Context, client *Client, desc ocispec.Descriptor) error {
-	info := content.Info{Digest: desc.Digest}
-	_, err := client.ContentStore().Update(ctx, info, "labels.containerd.io/gc.root")
-	return err
 }

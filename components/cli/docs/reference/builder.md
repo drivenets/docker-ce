@@ -765,7 +765,7 @@ type of documentation between the person who builds the image and the person who
 runs the container, about which ports are intended to be published. To actually
 publish the port when running the container, use the `-p` flag on `docker run`
 to publish and map one or more ports, or the `-P` flag to publish all exposed
-ports and map them to to high-order ports.
+ports and map them to high-order ports.
 
 To set up port redirection on the host system, see [using the -P
 flag](run.md#expose-incoming-ports). The `docker network` command supports
@@ -823,16 +823,23 @@ change them using `docker run --env <key>=<value>`.
 
 ADD has two forms:
 
-- `ADD <src>... <dest>`
-- `ADD ["<src>",... "<dest>"]` (this form is required for paths containing
+- `ADD [--chown=<user>:<group>] <src>... <dest>`
+- `ADD [--chown=<user>:<group>] ["<src>",... "<dest>"]` (this form is required for paths containing
 whitespace)
+
+> **Note**:
+> The `--chown` feature is only supported on Dockerfiles used to build Linux containers,
+> and will not work on Windows containers. Since user and group ownership concepts do
+> not translate between Linux and Windows, the use of `/etc/passwd` and `/etc/group` for
+> translating user and group names to IDs restricts this feature to only be viable for
+> for Linux OS-based containers.
 
 The `ADD` instruction copies new files, directories or remote file URLs from `<src>`
 and adds them to the filesystem of the image at the path `<dest>`.
 
-Multiple `<src>` resource may be specified but if they are files or
-directories then they must be relative to the source directory that is
-being built (the context of the build).
+Multiple `<src>` resources may be specified but if they are files or
+directories, their paths are interpreted as relative to the source of
+the context of the build.
 
 Each `<src>` may contain wildcards and matching will be done using Go's
 [filepath.Match](http://golang.org/pkg/path/filepath#Match) rules. For example:
@@ -854,7 +861,26 @@ named `arr[0].txt`, use the following;
     ADD arr[[]0].txt /mydir/    # copy a file named "arr[0].txt" to /mydir/
 
 
-All new files and directories are created with a UID and GID of 0.
+All new files and directories are created with a UID and GID of 0, unless the
+optional `--chown` flag specifies a given username, groupname, or UID/GID
+combination to request specific ownership of the content added. The
+format of the `--chown` flag allows for either username and groupname strings
+or direct integer UID and GID in any combination. Providing a username without
+groupname or a UID without GID will use the same numeric UID as the GID. If a
+username or groupname is provided, the container's root filesystem
+`/etc/passwd` and `/etc/group` files will be used to perform the translation
+from name to integer UID or GID respectively. The following examples show
+valid definitions for the `--chown` flag:
+
+    ADD --chown=55:mygroup files* /somedir/
+    ADD --chown=bin files* /somedir/
+    ADD --chown=1 files* /somedir/
+    ADD --chown=10:11 files* /somedir/
+
+If the container root filesystem does not contain either `/etc/passwd` or
+`/etc/group` files and either user or group names are used in the `--chown`
+flag, the build will fail on the `ADD` operation. Using numeric IDs requires
+no lookup and will not depend on container root filesystem content.
 
 In the case where `<src>` is a remote file URL, the destination will
 have permissions of 600. If the remote file being retrieved has an HTTP
@@ -944,15 +970,23 @@ guide](https://docs.docker.com/engine/userguide/eng-image/dockerfile_best-practi
 
 COPY has two forms:
 
-- `COPY <src>... <dest>`
-- `COPY ["<src>",... "<dest>"]` (this form is required for paths containing
+- `COPY [--chown=<user>:<group>] <src>... <dest>`
+- `COPY [--chown=<user>:<group>] ["<src>",... "<dest>"]` (this form is required for paths containing
 whitespace)
+
+> **Note**:
+> The `--chown` feature is only supported on Dockerfiles used to build Linux containers,
+> and will not work on Windows containers. Since user and group ownership concepts do
+> not translate between Linux and Windows, the use of `/etc/passwd` and `/etc/group` for
+> translating user and group names to IDs restricts this feature to only be viable for
+> for Linux OS-based containers.
 
 The `COPY` instruction copies new files or directories from `<src>`
 and adds them to the filesystem of the container at the path `<dest>`.
 
-Multiple `<src>` resource may be specified but they must be relative
-to the source directory that is being built (the context of the build).
+Multiple `<src>` resources may be specified but the paths of files and
+directories will be interpreted as relative to the source of the context
+of the build.
 
 Each `<src>` may contain wildcards and matching will be done using Go's
 [filepath.Match](http://golang.org/pkg/path/filepath#Match) rules. For example:
@@ -974,7 +1008,26 @@ named `arr[0].txt`, use the following;
 
     COPY arr[[]0].txt /mydir/    # copy a file named "arr[0].txt" to /mydir/
 
-All new files and directories are created with a UID and GID of 0.
+All new files and directories are created with a UID and GID of 0, unless the
+optional `--chown` flag specifies a given username, groupname, or UID/GID
+combination to request specific ownership of the copied content. The
+format of the `--chown` flag allows for either username and groupname strings
+or direct integer UID and GID in any combination. Providing a username without
+groupname or a UID without GID will use the same numeric UID as the GID. If a
+username or groupname is provided, the container's root filesystem
+`/etc/passwd` and `/etc/group` files will be used to perform the translation
+from name to integer UID or GID respectively. The following examples show
+valid definitions for the `--chown` flag:
+
+    COPY --chown=55:mygroup files* /somedir/
+    COPY --chown=bin files* /somedir/
+    COPY --chown=1 files* /somedir/
+    COPY --chown=10:11 files* /somedir/
+
+If the container root filesystem does not contain either `/etc/passwd` or
+`/etc/group` files and either user or group names are used in the `--chown`
+flag, the build will fail on the `COPY` operation. Using numeric IDs requires
+no lookup and will not depend on container root filesystem content.
 
 > **Note**:
 > If you build using STDIN (`docker build - < somefile`), there is no
@@ -1284,7 +1337,7 @@ consider the following Dockerfile snippet:
     RUN echo "hello world" > /myvol/greeting
     VOLUME /myvol
 
-This Dockerfile results in an image that causes `docker run`, to
+This Dockerfile results in an image that causes `docker run` to
 create a new mount point at `/myvol` and copy the  `greeting` file
 into the newly created volume.
 
@@ -1306,8 +1359,8 @@ Keep the following things in mind about volumes in the `Dockerfile`.
 
 - **The host directory is declared at container run-time**: The host directory
   (the mountpoint) is, by its nature, host-dependent. This is to preserve image
-  portability. since a given host directory can't be guaranteed to be available
-  on all hosts.For this reason, you can't mount a host directory from
+  portability, since a given host directory can't be guaranteed to be available
+  on all hosts. For this reason, you can't mount a host directory from
   within the Dockerfile. The `VOLUME` instruction does not support specifying a `host-dir`
   parameter.  You must specify the mountpoint when you create or run the container.
 
@@ -1322,8 +1375,19 @@ group (or GID) to use when running the image and for any `RUN`, `CMD` and
 `ENTRYPOINT` instructions that follow it in the `Dockerfile`.
 
 > **Warning**:
-> When the user does doesn't have a primary group then the image (or the next
+> When the user doesn't have a primary group then the image (or the next
 > instructions) will be run with the `root` group.
+
+> On Windows, the user must be created first if it's not a built-in account.
+> This can be done with the `net user` command called as part of a Dockerfile.
+
+```Dockerfile
+    FROM microsoft/windowsservercore
+    # Create Windows user in the container
+    RUN net user /add patrick
+    # Set it for subsequent commands
+    USER patrick
+```
 
 
 ## WORKDIR

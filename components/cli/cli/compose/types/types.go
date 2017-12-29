@@ -55,6 +55,7 @@ type ConfigFile struct {
 
 // ConfigDetails are the details about a group of ConfigFiles
 type ConfigDetails struct {
+	Version     string
 	WorkingDir  string
 	ConfigFiles []ConfigFile
 	Environment map[string]string
@@ -125,6 +126,7 @@ type ServiceConfig struct {
 	User            string
 	Volumes         []ServiceVolumeConfig
 	WorkingDir      string `mapstructure:"working_dir"`
+	Isolation       string `mapstructure:"isolation"`
 }
 
 // BuildConfig is a type for build
@@ -215,8 +217,24 @@ type Resources struct {
 // Resource is a resource to be limited or reserved
 type Resource struct {
 	// TODO: types to convert from units and ratios
-	NanoCPUs    string    `mapstructure:"cpus"`
-	MemoryBytes UnitBytes `mapstructure:"memory"`
+	NanoCPUs         string            `mapstructure:"cpus"`
+	MemoryBytes      UnitBytes         `mapstructure:"memory"`
+	GenericResources []GenericResource `mapstructure:"generic_resources"`
+}
+
+// GenericResource represents a "user defined" resource which can
+// only be an integer (e.g: SSD=3) for a service
+type GenericResource struct {
+	DiscreteResourceSpec *DiscreteGenericResource `mapstructure:"discrete_resource_spec"`
+}
+
+// DiscreteGenericResource represents a "user defined" resource which is defined
+// as an integer
+// "Kind" is used to describe the Kind of a resource (e.g: "GPU", "FPGA", "SSD", ...)
+// Value is used to count the resource (SSD=5, HDD=3, ...)
+type DiscreteGenericResource struct {
+	Kind  string
+	Value int64
 }
 
 // UnitBytes is the bytes type
@@ -277,7 +295,8 @@ type ServiceVolumeVolume struct {
 	NoCopy bool `mapstructure:"nocopy"`
 }
 
-type fileReferenceConfig struct {
+// FileReferenceConfig for a reference to a swarm file object
+type FileReferenceConfig struct {
 	Source string
 	Target string
 	UID    string
@@ -286,10 +305,10 @@ type fileReferenceConfig struct {
 }
 
 // ServiceConfigObjConfig is the config obj configuration for a service
-type ServiceConfigObjConfig fileReferenceConfig
+type ServiceConfigObjConfig FileReferenceConfig
 
 // ServiceSecretConfig is the secret configuration for a service
-type ServiceSecretConfig fileReferenceConfig
+type ServiceSecretConfig FileReferenceConfig
 
 // UlimitsConfig the ulimit configuration
 type UlimitsConfig struct {
@@ -300,6 +319,7 @@ type UlimitsConfig struct {
 
 // NetworkConfig for a network
 type NetworkConfig struct {
+	Name       string
 	Driver     string
 	DriverOpts map[string]string `mapstructure:"driver_opts"`
 	Ipam       IPAMConfig
@@ -343,14 +363,16 @@ type CredentialSpecConfig struct {
 	Registry string
 }
 
-type fileObjectConfig struct {
+// FileObjectConfig is a config type for a file used by a service
+type FileObjectConfig struct {
+	Name     string
 	File     string
 	External External
 	Labels   Labels
 }
 
 // SecretConfig for a secret
-type SecretConfig fileObjectConfig
+type SecretConfig FileObjectConfig
 
 // ConfigObjConfig is the config for the swarm "Config" object
-type ConfigObjConfig fileObjectConfig
+type ConfigObjConfig FileObjectConfig

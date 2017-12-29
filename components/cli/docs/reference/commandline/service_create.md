@@ -33,6 +33,7 @@ Options:
       --entrypoint command                 Overwrite the default ENTRYPOINT of the image
   -e, --env list                           Set environment variables
       --env-file list                      Read in a file of environment variables
+      --generic-resource list              User defined resources request
       --group list                         Set one or more supplementary user groups for the container
       --health-cmd string                  Command to run to check health
       --health-interval duration           Time between running the check (ms|s|m|h)
@@ -42,6 +43,7 @@ Options:
       --help                               Print usage
       --host list                          Set one or more custom host-to-IP mappings (host:ip)
       --hostname string                    Container hostname
+      --isolation string                   Service container isolation mode
   -l, --label list                         Service labels
       --limit-cpu decimal                  Limit CPUs
       --limit-memory bytes                 Limit Memory
@@ -353,7 +355,7 @@ volumes in a service:
            <li><tt>default</tt>: Equivalent to <tt>consistent</tt>.</li>
            <li><tt>consistent</tt>: Full consistency.  The container runtime and the host maintain an identical view of the mount at all times.</li>
            <li><tt>cached</tt>: The host's view of the mount is authoritative.  There may be delays before updates made on the host are visible within a container.</li>
-           <li><tt>delegated</tt>: The container runtime's view of the mount is authoritative.  There may be delays before updates made in a container are are visible on the host.</li>
+           <li><tt>delegated</tt>: The container runtime's view of the mount is authoritative.  There may be delays before updates made in a container are visible on the host.</li>
         </ul>
      </p>
     </td>
@@ -588,27 +590,27 @@ follows:
   <tr>
     <td><tt>node.id</tt></td>
     <td>Node ID</td>
-    <td><tt>node.id == 2ivku8v2gvtg4</tt></td>
+    <td><tt>node.id==2ivku8v2gvtg4</tt></td>
   </tr>
   <tr>
     <td><tt>node.hostname</tt></td>
     <td>Node hostname</td>
-    <td><tt>node.hostname != node-2</tt></td>
+    <td><tt>node.hostname!=node-2</tt></td>
   </tr>
   <tr>
     <td><tt>node.role</tt></td>
     <td>Node role</td>
-    <td><tt>node.role == manager</tt></td>
+    <td><tt>node.role==manager</tt></td>
   </tr>
   <tr>
     <td><tt>node.labels</tt></td>
     <td>user defined node labels</td>
-    <td><tt>node.labels.security == high</tt></td>
+    <td><tt>node.labels.security==high</tt></td>
   </tr>
   <tr>
     <td><tt>engine.labels</tt></td>
     <td>Docker Engine's labels</td>
-    <td><tt>engine.labels.operatingsystem == ubuntu 14.04</tt></td>
+    <td><tt>engine.labels.operatingsystem==ubuntu 14.04</tt></td>
   </tr>
 </table>
 
@@ -735,51 +737,75 @@ Containers on the same network can access each other using
 ### Publish service ports externally to the swarm (-p, --publish)
 
 You can publish service ports to make them available externally to the swarm
-using the `--publish` flag:
-
-```bash
-$ docker service create --publish <TARGET-PORT>:<SERVICE-PORT> nginx
-```
-
-For example:
+using the `--publish` flag. The `--publish` flag can take two different styles
+of arguments. The short version is positional, and allows you to specify the
+published port and target port separated by a colon.
 
 ```bash
 $ docker service create --name my_web --replicas 3 --publish 8080:80 nginx
 ```
 
-When you publish a service port, the swarm routing mesh makes the service
-accessible at the target port on every node regardless if there is a task for
-the service running on the node. For more information refer to
+There is also a long format, which is easier to read and allows you to specify
+more options. The long format is preferred. You cannot specify the service's
+mode when using the short format. Here is an example of using the long format
+for the same service as above:
+
+```bash
+$ docker service create --name my_web --replicas 3 --publish published=8080,target=80 nginx
+```
+
+The options you can specify are:
+
+<table>
+<thead>
+<tr>
+  <th>Option</th>
+  <th>Short syntax</th>
+  <th>Long syntax</th>
+  <th>Description</th>
+</tr>
+<tr>
+  <td>published and target port </td>
+  <td><tt></tt></td>
+  <td><tt></tt></td>
+  <td></td>
+</tr>
+<tr>
+  <td>protocol</td>
+  <td><tt>--publish 8080:80</tt></td>
+  <td><tt>--publish published=8080,target=80</tt></td>
+  <td><p>
+    The port to publish the service to on the routing mesh or directly on
+    the node, and the target port on the container.
+  </p></td>
+</tr>
+<tr>
+  <td>mode</td>
+  <td>Not possible to set using short syntax.</td>
+  <td><tt>--publish published=8080,target=80,mode=host</tt></td>
+  <td><p>
+    The mode to use for binding the port, either `ingress` or `host`. Defaults
+    to `ingress` to use the routing mesh.
+  </p></td>
+</tr>
+<tr>
+  <td>protocol</td>
+  <td><tt>--publish 8080:80/tcp</tt></td>
+  <td><tt>--publish published=8080,target=80,protocol=tcp</tt></td>
+  <td><p>
+    The protocol to use, either `tcp` or `udp`. Defaults to `tcp`. To bind a
+    port for both protocols, specify the `-p` or `--publish` flag twice.
+  </p></td>
+</tr>
+</table>
+
+When you publish a service port using `ingres` mode, the swarm routing mesh
+makes the service accessible at the published port on every node regardless if
+there is a task for the service running on the node. If you use `host` mode,
+the port is only bound on nodes where the service is running, and a given port
+on a node can only be bound once. You can only set the publication mode using
+the long syntax. For more information refer to
 [Use swarm mode routing mesh](https://docs.docker.com/engine/swarm/ingress/).
-
-### Publish a port for TCP only or UDP only
-
-By default, when you publish a port, it is a TCP port. You can
-specifically publish a UDP port instead of or in addition to a TCP port. When
-you publish both TCP and UDP ports, Docker 1.12.2 and earlier require you to
-add the suffix `/tcp` for TCP ports. Otherwise it is optional.
-
-#### TCP only
-
-The following two commands are equivalent.
-
-```bash
-$ docker service create --name dns-cache -p 53:53 dns-cache
-
-$ docker service create --name dns-cache -p 53:53/tcp dns-cache
-```
-
-#### TCP and UDP
-
-```bash
-$ docker service create --name dns-cache -p 53:53/tcp -p 53:53/udp dns-cache
-```
-
-#### UDP only
-
-```bash
-$ docker service create --name dns-cache -p 53:53/udp dns-cache
-```
 
 ### Provide credential specs for managed service accounts (Windows only)
 
@@ -873,6 +899,33 @@ wo41w8hg8qan  hosttempl.1  busybox:latest@sha256:29f5d56d12684887bdfa50dcd29fc31
 $ docker inspect --format="{{.Config.Hostname}}" 2e7a8a9c4da2-wo41w8hg8qanxwjwsg4kxpprj-hosttempl
 
 x3ti0erg11rjpg64m75kej2mz-hosttempl
+```
+
+### Specify isolation mode (Windows)
+
+By default, tasks scheduled on Windows nodes are run using the default isolation mode 
+configured for this particular node. To force a specific isolation mode, you can use 
+the `--isolation` flag: 
+
+```bash
+$ docker service create --name myservice --isolation=process microsoft/nanoserver
+```
+
+Supported isolation modes on Windows are:
+- `default`: use default settings specified on the node running the task
+- `process`: use process isolation (Windows server only)
+- `hyperv`: use Hyper-V isolation
+
+### Create services requesting Generic Resources
+
+You can narrow the kind of nodes your task can land on through the using the
+`--generic-resource` flag (if the nodes advertise these resources):
+
+```bash
+$ docker service create --name cuda \
+                        --generic-resource "NVIDIA-GPU=2" \
+                        --generic-resource "SSD=1" \
+                        nvidia/cuda
 ```
 
 ## Related commands

@@ -518,3 +518,71 @@ func TestUpdateStopSignal(t *testing.T) {
 	updateService(nil, nil, flags, spec)
 	assert.Equal(t, "SIGWINCH", cspec.StopSignal)
 }
+
+func TestUpdateIsolationValid(t *testing.T) {
+	flags := newUpdateCommand(nil).Flags()
+	err := flags.Set("isolation", "process")
+	require.NoError(t, err)
+	spec := swarm.ServiceSpec{
+		TaskTemplate: swarm.TaskSpec{
+			ContainerSpec: &swarm.ContainerSpec{},
+		},
+	}
+	err = updateService(context.Background(), nil, flags, &spec)
+	require.NoError(t, err)
+	assert.Equal(t, container.IsolationProcess, spec.TaskTemplate.ContainerSpec.Isolation)
+}
+
+func TestUpdateIsolationInvalid(t *testing.T) {
+	// validation depends on daemon os / version so validation should be done on the daemon side
+	flags := newUpdateCommand(nil).Flags()
+	err := flags.Set("isolation", "test")
+	require.NoError(t, err)
+	spec := swarm.ServiceSpec{
+		TaskTemplate: swarm.TaskSpec{
+			ContainerSpec: &swarm.ContainerSpec{},
+		},
+	}
+	err = updateService(context.Background(), nil, flags, &spec)
+	require.NoError(t, err)
+	assert.Equal(t, container.Isolation("test"), spec.TaskTemplate.ContainerSpec.Isolation)
+}
+
+func TestAddGenericResources(t *testing.T) {
+	task := &swarm.TaskSpec{}
+	flags := newUpdateCommand(nil).Flags()
+
+	assert.Nil(t, addGenericResources(flags, task))
+
+	flags.Set(flagGenericResourcesAdd, "foo=1")
+	assert.NoError(t, addGenericResources(flags, task))
+	assert.Len(t, task.Resources.Reservations.GenericResources, 1)
+
+	// Checks that foo isn't added a 2nd time
+	flags = newUpdateCommand(nil).Flags()
+	flags.Set(flagGenericResourcesAdd, "bar=1")
+	assert.NoError(t, addGenericResources(flags, task))
+	assert.Len(t, task.Resources.Reservations.GenericResources, 2)
+}
+
+func TestRemoveGenericResources(t *testing.T) {
+	task := &swarm.TaskSpec{}
+	flags := newUpdateCommand(nil).Flags()
+
+	assert.Nil(t, removeGenericResources(flags, task))
+
+	flags.Set(flagGenericResourcesRemove, "foo")
+	assert.Error(t, removeGenericResources(flags, task))
+
+	flags = newUpdateCommand(nil).Flags()
+	flags.Set(flagGenericResourcesAdd, "foo=1")
+	addGenericResources(flags, task)
+	flags = newUpdateCommand(nil).Flags()
+	flags.Set(flagGenericResourcesAdd, "bar=1")
+	addGenericResources(flags, task)
+
+	flags = newUpdateCommand(nil).Flags()
+	flags.Set(flagGenericResourcesRemove, "foo")
+	assert.NoError(t, removeGenericResources(flags, task))
+	assert.Len(t, task.Resources.Reservations.GenericResources, 1)
+}

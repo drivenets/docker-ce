@@ -131,10 +131,10 @@ func (bm *BuildManager) initializeClientSession(ctx context.Context, cancel func
 	}
 	logrus.Debug("client is session enabled")
 
-	ctx, cancelCtx := context.WithTimeout(ctx, sessionConnectTimeout)
+	connectCtx, cancelCtx := context.WithTimeout(ctx, sessionConnectTimeout)
 	defer cancelCtx()
 
-	c, err := bm.sg.Get(ctx, options.SessionID)
+	c, err := bm.sg.Get(connectCtx, options.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +396,8 @@ func BuildFromConfig(config *container.Config, changes []string) (*container.Con
 	}
 
 	dispatchRequest := newDispatchRequest(b, dockerfile.EscapeToken, nil, newBuildArgs(b.options.BuildArgs), newStagesBuildResults())
-	dispatchRequest.state.runConfig = config
+	// We make mutations to the configuration, ensure we have a copy
+	dispatchRequest.state.runConfig = copyRunConfig(config)
 	dispatchRequest.state.imageID = config.Image
 	for _, cmd := range commands {
 		err := dispatch(dispatchRequest, cmd)

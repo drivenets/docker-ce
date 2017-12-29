@@ -2729,7 +2729,7 @@ func (s *DockerSuite) TestRunContainerWithReadonlyRootfs(c *check.C) {
 	if root := os.Getenv("DOCKER_REMAP_ROOT"); root != "" {
 		testPriv = false
 	}
-	testReadOnlyFile(c, testPriv, "/file", "/etc/hosts", "/etc/resolv.conf", "/etc/hostname", "/sys/kernel", "/dev/.dont.touch.me")
+	testReadOnlyFile(c, testPriv, "/file", "/etc/hosts", "/etc/resolv.conf", "/etc/hostname", "/sys/kernel")
 }
 
 func (s *DockerSuite) TestPermissionsPtsReadonlyRootfs(c *check.C) {
@@ -3115,6 +3115,11 @@ func (s *DockerSuite) TestRunNetworkFilesBindMount(c *check.C) {
 	filename := createTmpFile(c, expected)
 	defer os.Remove(filename)
 
+	// for user namespaced test runs, the temp file must be accessible to unprivileged root
+	if err := os.Chmod(filename, 0646); err != nil {
+		c.Fatalf("error modifying permissions of %s: %v", filename, err)
+	}
+
 	nwfiles := []string{"/etc/resolv.conf", "/etc/hosts", "/etc/hostname"}
 
 	for i := range nwfiles {
@@ -3132,6 +3137,11 @@ func (s *DockerSuite) TestRunNetworkFilesBindMountRO(c *check.C) {
 	filename := createTmpFile(c, "test123")
 	defer os.Remove(filename)
 
+	// for user namespaced test runs, the temp file must be accessible to unprivileged root
+	if err := os.Chmod(filename, 0646); err != nil {
+		c.Fatalf("error modifying permissions of %s: %v", filename, err)
+	}
+
 	nwfiles := []string{"/etc/resolv.conf", "/etc/hosts", "/etc/hostname"}
 
 	for i := range nwfiles {
@@ -3148,6 +3158,11 @@ func (s *DockerSuite) TestRunNetworkFilesBindMountROFilesystem(c *check.C) {
 
 	filename := createTmpFile(c, "test123")
 	defer os.Remove(filename)
+
+	// for user namespaced test runs, the temp file must be accessible to unprivileged root
+	if err := os.Chmod(filename, 0646); err != nil {
+		c.Fatalf("error modifying permissions of %s: %v", filename, err)
+	}
 
 	nwfiles := []string{"/etc/resolv.conf", "/etc/hosts", "/etc/hostname"}
 
@@ -4268,6 +4283,17 @@ func (s *DockerSuite) TestRunCredentialSpecWellFormed(c *check.C) {
 // servicing event and verifying the event from Hyper-V-Compute
 func (s *DockerSuite) TestRunServicingContainer(c *check.C) {
 	testRequires(c, DaemonIsWindows, SameHostDaemon)
+
+	// This functionality does not exist in post-RS3 builds.
+	// Note we get the version number from the full build string, as Windows
+	// reports Windows 8 version 6.2 build 9200 from non-manifested binaries.
+	// Ref: https://msdn.microsoft.com/en-us/library/windows/desktop/ms724451(v=vs.85).aspx
+	v, err := kernel.GetKernelVersion()
+	c.Assert(err, checker.IsNil)
+	build, _ := strconv.Atoi(strings.Split(strings.SplitN(v.String(), " ", 3)[2][1:], ".")[0])
+	if build > 16299 {
+		c.Skip("Disabled on post-RS3 builds")
+	}
 
 	out := cli.DockerCmd(c, "run", "-d", testEnv.MinimalBaseImage(), "cmd", "/c", "mkdir c:\\programdata\\Microsoft\\Windows\\ContainerUpdates\\000_000_d99f45d0-ffc8-4af7-bd9c-ea6a62e035c9_200 && sc control cexecsvc 255").Combined()
 	containerID := strings.TrimSpace(out)

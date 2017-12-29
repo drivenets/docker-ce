@@ -198,9 +198,9 @@ func (c *Cluster) Join(req types.JoinRequest) error {
 
 // Inspect retrieves the configuration properties of a managed swarm cluster.
 func (c *Cluster) Inspect() (types.Swarm, error) {
-	var swarm *swarmapi.Cluster
+	var swarm types.Swarm
 	if err := c.lockedManagerAction(func(ctx context.Context, state nodeState) error {
-		s, err := getSwarm(ctx, state.controlClient)
+		s, err := c.inspect(ctx, state)
 		if err != nil {
 			return err
 		}
@@ -209,7 +209,15 @@ func (c *Cluster) Inspect() (types.Swarm, error) {
 	}); err != nil {
 		return types.Swarm{}, err
 	}
-	return convert.SwarmFromGRPC(*swarm), nil
+	return swarm, nil
+}
+
+func (c *Cluster) inspect(ctx context.Context, state nodeState) (types.Swarm, error) {
+	s, err := getSwarm(ctx, state.controlClient)
+	if err != nil {
+		return types.Swarm{}, err
+	}
+	return convert.SwarmFromGRPC(*s), nil
 }
 
 // Update updates configuration of a managed swarm cluster.
@@ -218,6 +226,13 @@ func (c *Cluster) Update(version uint64, spec types.Spec, flags types.UpdateFlag
 		swarm, err := getSwarm(ctx, state.controlClient)
 		if err != nil {
 			return err
+		}
+
+		// Validate spec name.
+		if spec.Annotations.Name == "" {
+			spec.Annotations.Name = "default"
+		} else if spec.Annotations.Name != "default" {
+			return validationError{errors.New(`swarm spec must be named "default"`)}
 		}
 
 		// In update, client should provide the complete spec of the swarm, including
@@ -413,7 +428,7 @@ func (c *Cluster) Info() types.Info {
 
 	if state.IsActiveManager() {
 		info.ControlAvailable = true
-		swarm, err := c.Inspect()
+		swarm, err := c.inspect(ctx, state)
 		if err != nil {
 			info.Error = err.Error()
 		}

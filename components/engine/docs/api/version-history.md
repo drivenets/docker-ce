@@ -13,6 +13,34 @@ keywords: "API, Docker, rcli, REST, documentation"
      will be rejected.
 -->
 
+## v1.36 API changes
+
+[Docker Engine API v1.36](https://docs.docker.com/engine/api/v1.36/) documentation
+
+
+## v1.35 API changes
+
+[Docker Engine API v1.35](https://docs.docker.com/engine/api/v1.35/) documentation
+
+* `POST /services/create` and `POST /services/(id)/update` now accepts an
+  `Isolation` field on container spec to set the Isolation technology of the
+  containers running the service (`default`, `process`, or `hyperv`). This
+  configuration is only used for Windows containers.
+* `GET /containers/(name)/logs` now supports an additional query parameter: `until`,
+  which returns log lines that occurred before the specified timestamp.
+* `POST /containers/{id}/exec` now accepts a `WorkingDir` property to set the
+  work-dir for the exec process, independent of the container's work-dir.
+* `Get /version` now returns a `Platform.Name` field, which can be used by products
+  using Moby as a foundation to return information about the platform.
+* `Get /version` now returns a `Components` field, which can be used to return
+  information about the components used. Information about the engine itself is
+  now included as a "Component" version, and contains all information from the
+  top-level `Version`, `GitCommit`, `APIVersion`, `MinAPIVersion`, `GoVersion`,
+  `Os`, `Arch`, `BuildTime`, `KernelVersion`, and `Experimental` fields. Going
+  forward, the information from the `Components` section is preferred over their
+  top-level counterparts.
+
+
 ## v1.34 API changes
 
 [Docker Engine API v1.34](https://docs.docker.com/engine/api/v1.34/) documentation
@@ -93,7 +121,7 @@ keywords: "API, Docker, rcli, REST, documentation"
 * `POST /containers/(name)/wait` now accepts a `condition` query parameter to indicate which state change condition to wait for. Also, response headers are now returned immediately to acknowledge that the server has registered a wait callback for the client.
 * `POST /swarm/init` now accepts a `DataPathAddr` property to set the IP-address or network interface to use for data traffic
 * `POST /swarm/join` now accepts a `DataPathAddr` property to set the IP-address or network interface to use for data traffic
-* `GET /events` now supports service, node and secret events which are emitted when users create, update and remove service, node and secret 
+* `GET /events` now supports service, node and secret events which are emitted when users create, update and remove service, node and secret
 * `GET /events` now supports network remove event which is emitted when users remove a swarm scoped network
 * `GET /events` now supports a filter type `scope` in which supported value could be swarm and local
 
