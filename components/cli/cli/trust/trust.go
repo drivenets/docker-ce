@@ -127,7 +127,7 @@ func GetNotaryRepository(in io.Reader, out io.Writer, userAgent string, repoInfo
 	}
 
 	// Skip configuration headers since request is not going to Docker daemon
-	modifiers := registry.DockerHeaders(userAgent, http.Header{})
+	modifiers := registry.Headers(userAgent, http.Header{})
 	authTransport := transport.NewTransport(base, modifiers...)
 	pingClient := &http.Client{
 		Transport: authTransport,
@@ -299,15 +299,24 @@ type ImageRefAndAuth struct {
 }
 
 // GetImageReferencesAndAuth retrieves the necessary reference and auth information for an image name
-// as a ImageRefAndAuth struct
-func GetImageReferencesAndAuth(ctx context.Context, authResolver func(ctx context.Context, index *registrytypes.IndexInfo) types.AuthConfig, imgName string) (ImageRefAndAuth, error) {
+// as an ImageRefAndAuth struct
+func GetImageReferencesAndAuth(ctx context.Context, rs registry.Service,
+	authResolver func(ctx context.Context, index *registrytypes.IndexInfo) types.AuthConfig,
+	imgName string,
+) (ImageRefAndAuth, error) {
 	ref, err := reference.ParseNormalizedNamed(imgName)
 	if err != nil {
 		return ImageRefAndAuth{}, err
 	}
 
 	// Resolve the Repository name from fqn to RepositoryInfo
-	repoInfo, err := registry.ParseRepositoryInfo(ref)
+	var repoInfo *registry.RepositoryInfo
+	if rs != nil {
+		repoInfo, err = rs.ResolveRepository(ref)
+	} else {
+		repoInfo, err = registry.ParseRepositoryInfo(ref)
+	}
+
 	if err != nil {
 		return ImageRefAndAuth{}, err
 	}

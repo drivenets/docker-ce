@@ -181,6 +181,13 @@ type Config struct {
 	// be able to increase this to get more content into each gossip packet.
 	PacketBufferSize int
 
+	// reapEntryInterval duration of a deleted entry before being garbage collected
+	reapEntryInterval time.Duration
+
+	// reapNetworkInterval duration of a delted network before being garbage collected
+	// NOTE this MUST always be higher than reapEntryInterval
+	reapNetworkInterval time.Duration
+
 	// StatsPrintPeriod the period to use to print queue stats
 	// Default is 5min
 	StatsPrintPeriod time.Duration
@@ -220,12 +227,18 @@ func DefaultConfig() *Config {
 		PacketBufferSize:  1400,
 		StatsPrintPeriod:  5 * time.Minute,
 		HealthPrintPeriod: 1 * time.Minute,
+		reapEntryInterval: 30 * time.Minute,
 	}
 }
 
 // New creates a new instance of NetworkDB using the Config passed by
 // the caller.
 func New(c *Config) (*NetworkDB, error) {
+	// The garbage collection logic for entries leverage the presence of the network.
+	// For this reason the expiration time of the network is put slightly higher than the entry expiration so that
+	// there is at least 5 extra cycle to make sure that all the entries are properly deleted before deleting the network.
+	c.reapNetworkInterval = c.reapEntryInterval + 5*reapPeriod
+
 	nDB := &NetworkDB{
 		config:         c,
 		indexes:        make(map[int]*radix.Tree),
@@ -241,7 +254,7 @@ func New(c *Config) (*NetworkDB, error) {
 	nDB.indexes[byTable] = radix.New()
 	nDB.indexes[byNetwork] = radix.New()
 
-	logrus.Debugf("New memberlist node - Node:%v will use memberlist nodeID:%v", c.Hostname, c.NodeID)
+	logrus.Infof("New memberlist node - Node:%v will use memberlist nodeID:%v with config:%+v", c.Hostname, c.NodeID, c)
 	if err := nDB.clusterInit(); err != nil {
 		return nil, err
 	}
@@ -297,6 +310,10 @@ func (nDB *NetworkDB) Peers(nid string) []PeerInfo {
 				Name: node.Name,
 				IP:   node.Addr.String(),
 			})
+		} else {
+			// Added for testing purposes, this condition should never happen else mean that the network list
+			// is out of sync with the node list
+			peers = append(peers, PeerInfo{Name: nodeName, IP: "unknown"})
 		}
 	}
 	return peers
@@ -305,18 +322,20 @@ func (nDB *NetworkDB) Peers(nid string) []PeerInfo {
 // GetEntry retrieves the value of a table entry in a given (network,
 // table, key) tuple
 func (nDB *NetworkDB) GetEntry(tname, nid, key string) ([]byte, error) {
+	nDB.RLock()
+	defer nDB.RUnlock()
 	entry, err := nDB.getEntry(tname, nid, key)
 	if err != nil {
 		return nil, err
+	}
+	if entry != nil && entry.deleting {
+		return nil, types.NotFoundErrorf("entry in table %s network id %s and key %s deleted and pending garbage collection", tname, nid, key)
 	}
 
 	return entry.value, nil
 }
 
 func (nDB *NetworkDB) getEntry(tname, nid, key string) (*entry, error) {
-	nDB.RLock()
-	defer nDB.RUnlock()
-
 	e, ok := nDB.indexes[byTable].Get(fmt.Sprintf("/%s/%s/%s", tname, nid, key))
 	if !ok {
 		return nil, types.NotFoundErrorf("could not get entry in table %s with network id %s and key %s", tname, nid, key)
@@ -331,13 +350,10 @@ func (nDB *NetworkDB) getEntry(tname, nid, key string) (*entry, error) {
 // entry for the same tuple for which there is already an existing
 // entry unless the current entry is deleting state.
 func (nDB *NetworkDB) CreateEntry(tname, nid, key string, value []byte) error {
+	nDB.Lock()
 	oldEntry, err := nDB.getEntry(tname, nid, key)
-	if err != nil {
-		if _, ok := err.(types.NotFoundError); !ok {
-			return fmt.Errorf("cannot create entry in table %s with network id %s and key %s: %v", tname, nid, key, err)
-		}
-	}
-	if oldEntry != nil && !oldEntry.deleting {
+	if err == nil || (oldEntry != nil && !oldEntry.deleting) {
+		nDB.Unlock()
 		return fmt.Errorf("cannot create entry in table %s with network id %s and key %s, already exists", tname, nid, key)
 	}
 
@@ -347,13 +363,12 @@ func (nDB *NetworkDB) CreateEntry(tname, nid, key string, value []byte) error {
 		value: value,
 	}
 
+	nDB.createOrUpdateEntry(nid, tname, key, entry)
+	nDB.Unlock()
+
 	if err := nDB.sendTableEvent(TableEventTypeCreate, nid, tname, key, entry); err != nil {
 		return fmt.Errorf("cannot send create event for table %s, %v", tname, err)
 	}
-
-	nDB.Lock()
-	nDB.createOrUpdateEntry(nid, tname, key, entry)
-	nDB.Unlock()
 
 	return nil
 }
@@ -363,7 +378,9 @@ func (nDB *NetworkDB) CreateEntry(tname, nid, key string, value []byte) error {
 // propagates this event to the cluster. It is an error to update a
 // non-existent entry.
 func (nDB *NetworkDB) UpdateEntry(tname, nid, key string, value []byte) error {
-	if _, err := nDB.GetEntry(tname, nid, key); err != nil {
+	nDB.Lock()
+	if _, err := nDB.getEntry(tname, nid, key); err != nil {
+		nDB.Unlock()
 		return fmt.Errorf("cannot update entry as the entry in table %s with network id %s and key %s does not exist", tname, nid, key)
 	}
 
@@ -373,28 +390,33 @@ func (nDB *NetworkDB) UpdateEntry(tname, nid, key string, value []byte) error {
 		value: value,
 	}
 
+	nDB.createOrUpdateEntry(nid, tname, key, entry)
+	nDB.Unlock()
+
 	if err := nDB.sendTableEvent(TableEventTypeUpdate, nid, tname, key, entry); err != nil {
 		return fmt.Errorf("cannot send table update event: %v", err)
 	}
 
-	nDB.Lock()
-	nDB.createOrUpdateEntry(nid, tname, key, entry)
-	nDB.Unlock()
-
 	return nil
+}
+
+// TableElem elem
+type TableElem struct {
+	Value []byte
+	owner string
 }
 
 // GetTableByNetwork walks the networkdb by the give table and network id and
 // returns a map of keys and values
-func (nDB *NetworkDB) GetTableByNetwork(tname, nid string) map[string]interface{} {
-	entries := make(map[string]interface{})
+func (nDB *NetworkDB) GetTableByNetwork(tname, nid string) map[string]*TableElem {
+	entries := make(map[string]*TableElem)
 	nDB.indexes[byTable].WalkPrefix(fmt.Sprintf("/%s/%s", tname, nid), func(k string, v interface{}) bool {
 		entry := v.(*entry)
 		if entry.deleting {
 			return false
 		}
 		key := k[strings.LastIndex(k, "/")+1:]
-		entries[key] = entry.value
+		entries[key] = &TableElem{Value: entry.value, owner: entry.node}
 		return false
 	})
 	return entries
@@ -404,31 +426,33 @@ func (nDB *NetworkDB) GetTableByNetwork(tname, nid string) map[string]interface{
 // table, key) tuple and if the NetworkDB is part of the cluster
 // propagates this event to the cluster.
 func (nDB *NetworkDB) DeleteEntry(tname, nid, key string) error {
-	value, err := nDB.GetEntry(tname, nid, key)
-	if err != nil {
-		return fmt.Errorf("cannot delete entry as the entry in table %s with network id %s and key %s does not exist", tname, nid, key)
+	nDB.Lock()
+	oldEntry, err := nDB.getEntry(tname, nid, key)
+	if err != nil || oldEntry == nil || oldEntry.deleting {
+		nDB.Unlock()
+		return fmt.Errorf("cannot delete entry %s with network id %s and key %s "+
+			"does not exist or is already being deleted", tname, nid, key)
 	}
 
 	entry := &entry{
 		ltime:    nDB.tableClock.Increment(),
 		node:     nDB.config.NodeID,
-		value:    value,
+		value:    oldEntry.value,
 		deleting: true,
-		reapTime: reapEntryInterval,
+		reapTime: nDB.config.reapEntryInterval,
 	}
+
+	nDB.createOrUpdateEntry(nid, tname, key, entry)
+	nDB.Unlock()
 
 	if err := nDB.sendTableEvent(TableEventTypeDelete, nid, tname, key, entry); err != nil {
 		return fmt.Errorf("cannot send table delete event: %v", err)
 	}
 
-	nDB.Lock()
-	nDB.createOrUpdateEntry(nid, tname, key, entry)
-	nDB.Unlock()
-
 	return nil
 }
 
-func (nDB *NetworkDB) deleteNetworkEntriesForNode(deletedNode string) {
+func (nDB *NetworkDB) deleteNodeFromNetworks(deletedNode string) {
 	for nid, nodes := range nDB.networkNodes {
 		updatedNodes := make([]string, 0, len(nodes))
 		for _, node := range nodes {
@@ -487,7 +511,7 @@ func (nDB *NetworkDB) deleteNodeNetworkEntries(nid, node string) {
 				node:     oldEntry.node,
 				value:    oldEntry.value,
 				deleting: true,
-				reapTime: reapEntryInterval,
+				reapTime: nDB.config.reapEntryInterval,
 			}
 
 			// we arrived at this point in 2 cases:
@@ -530,7 +554,9 @@ func (nDB *NetworkDB) deleteNodeTableEntries(node string) {
 
 		nDB.deleteEntry(nid, tname, key)
 
-		nDB.broadcaster.Write(makeEvent(opDelete, tname, nid, key, oldEntry.value))
+		if !oldEntry.deleting {
+			nDB.broadcaster.Write(makeEvent(opDelete, tname, nid, key, oldEntry.value))
+		}
 		return false
 	})
 }
@@ -580,6 +606,9 @@ func (nDB *NetworkDB) JoinNetwork(nid string) error {
 	nodeNetworks[nid] = &network{id: nid, ltime: ltime, entriesNumber: entries}
 	nodeNetworks[nid].tableBroadcasts = &memberlist.TransmitLimitedQueue{
 		NumNodes: func() int {
+			//TODO fcrisciani this can be optimized maybe avoiding the lock?
+			// this call is done each GetBroadcasts call to evaluate the number of
+			// replicas for the message
 			nDB.RLock()
 			defer nDB.RUnlock()
 			return len(nDB.networkNodes[nid])
@@ -635,7 +664,7 @@ func (nDB *NetworkDB) LeaveNetwork(nid string) error {
 
 	logrus.Debugf("%v(%v): leaving network %s", nDB.config.Hostname, nDB.config.NodeID, nid)
 	n.ltime = ltime
-	n.reapTime = reapNetworkInterval
+	n.reapTime = nDB.config.reapNetworkInterval
 	n.leaving = true
 	return nil
 }

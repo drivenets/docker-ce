@@ -1,4 +1,4 @@
-package oci
+package oci // import "github.com/docker/docker/oci"
 
 import (
 	"os"
@@ -115,10 +115,13 @@ func DefaultLinuxSpec() specs.Spec {
 	s.Linux = &specs.Linux{
 		MaskedPaths: []string{
 			"/proc/kcore",
+			"/proc/keys",
 			"/proc/latency_stats",
 			"/proc/timer_list",
 			"/proc/timer_stats",
 			"/proc/sched_debug",
+			"/proc/scsi",
+			"/sys/firmware",
 		},
 		ReadonlyPaths: []string{
 			"/proc/asound",
@@ -202,11 +205,6 @@ func DefaultLinuxSpec() specs.Spec {
 	// For LCOW support, populate a blank Windows spec
 	if runtime.GOOS == "windows" {
 		s.Windows = &specs.Windows{}
-	}
-
-	// For LCOW support, don't mask /sys/firmware
-	if runtime.GOOS != "windows" {
-		s.Linux.MaskedPaths = append(s.Linux.MaskedPaths, "/sys/firmware")
 	}
 
 	return s

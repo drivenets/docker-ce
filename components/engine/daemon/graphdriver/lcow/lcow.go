@@ -53,7 +53,7 @@
 
 // TODO: Grab logs from SVM at terminate or errors
 
-package lcow
+package lcow // import "github.com/docker/docker/daemon/graphdriver/lcow"
 
 import (
 	"encoding/json"
@@ -181,17 +181,17 @@ func InitDriver(dataRoot string, options []string, _, _ []idtools.IDMap) (graphd
 	}
 
 	// Make sure the dataRoot directory is created
-	if err := idtools.MkdirAllAs(dataRoot, 0700, 0, 0); err != nil {
+	if err := idtools.MkdirAllAndChown(dataRoot, 0700, idtools.IDPair{UID: 0, GID: 0}); err != nil {
 		return nil, fmt.Errorf("%s failed to create '%s': %v", title, dataRoot, err)
 	}
 
 	// Make sure the cache directory is created under dataRoot
-	if err := idtools.MkdirAllAs(cd, 0700, 0, 0); err != nil {
+	if err := idtools.MkdirAllAndChown(cd, 0700, idtools.IDPair{UID: 0, GID: 0}); err != nil {
 		return nil, fmt.Errorf("%s failed to create '%s': %v", title, cd, err)
 	}
 
 	// Make sure the scratch directory is created under dataRoot
-	if err := idtools.MkdirAllAs(sd, 0700, 0, 0); err != nil {
+	if err := idtools.MkdirAllAndChown(sd, 0700, idtools.IDPair{UID: 0, GID: 0}); err != nil {
 		return nil, fmt.Errorf("%s failed to create '%s': %v", title, sd, err)
 	}
 
@@ -409,7 +409,7 @@ func (d *Driver) terminateServiceVM(id, context string, force bool) (err error) 
 		svm.signalStopFinished(err)
 	}()
 
-	// Now it's possible that the serivce VM failed to start and now we are trying to termiante it.
+	// Now it's possible that the serivce VM failed to start and now we are trying to terminate it.
 	// In this case, we will relay the error to the goroutines waiting for this vm to stop.
 	if err := svm.getStartError(); err != nil {
 		logrus.Debugf("lcowdriver: terminateservicevm: %s had failed to start up: %s", id, err)
@@ -824,7 +824,7 @@ func (d *Driver) ApplyDiff(id, parent string, diff io.Reader) (int64, error) {
 		return 0, fmt.Errorf("lcowdriver: applydiff: svm failed to boot: %s", err)
 	}
 
-	// TODO @jhowardmsft - the retries are temporary to overcome platform reliablity issues.
+	// TODO @jhowardmsft - the retries are temporary to overcome platform reliability issues.
 	// Obviously this will be removed as platform bugs are fixed.
 	retries := 0
 	for {

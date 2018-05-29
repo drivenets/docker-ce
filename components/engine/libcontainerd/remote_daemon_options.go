@@ -1,6 +1,6 @@
 // +build !windows
 
-package libcontainerd
+package libcontainerd // import "github.com/docker/docker/libcontainerd"
 
 import "fmt"
 
@@ -31,8 +31,8 @@ type rpcUser struct {
 
 func (u rpcUser) Apply(r Remote) error {
 	if remote, ok := r.(*remote); ok {
-		remote.GRPC.Uid = u.uid
-		remote.GRPC.Gid = u.gid
+		remote.GRPC.UID = u.uid
+		remote.GRPC.GID = u.gid
 		return nil
 	}
 	return fmt.Errorf("WithRemoteAddr option not supported for this remote")

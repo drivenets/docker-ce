@@ -8,6 +8,7 @@ import (
 
 	"github.com/docker/docker/integration-cli/checker"
 	"github.com/docker/docker/integration-cli/daemon"
+	testdaemon "github.com/docker/docker/internal/test/daemon"
 	"github.com/go-check/check"
 )
 
@@ -36,7 +37,7 @@ func (s *DockerSuite) TestInfoEnsureSucceeds(c *check.C) {
 		"Live Restore Enabled:",
 	}
 
-	if testEnv.DaemonPlatform() == "linux" {
+	if testEnv.OSType == "linux" {
 		stringsToCheck = append(stringsToCheck, "Init Binary:", "Security Options:", "containerd version:", "runc version:", "init version:")
 	}
 
@@ -44,7 +45,7 @@ func (s *DockerSuite) TestInfoEnsureSucceeds(c *check.C) {
 		stringsToCheck = append(stringsToCheck, "Runtimes:", "Default Runtime: runc")
 	}
 
-	if testEnv.ExperimentalDaemon() {
+	if testEnv.DaemonInfo.ExperimentalBuild {
 		stringsToCheck = append(stringsToCheck, "Experimental: true")
 	} else {
 		stringsToCheck = append(stringsToCheck, "Experimental: false")
@@ -71,9 +72,7 @@ func (s *DockerSuite) TestInfoFormat(c *check.C) {
 func (s *DockerSuite) TestInfoDiscoveryBackend(c *check.C) {
 	testRequires(c, SameHostDaemon, DaemonIsLinux)
 
-	d := daemon.New(c, dockerBinary, dockerdBinary, daemon.Config{
-		Experimental: testEnv.ExperimentalDaemon(),
-	})
+	d := daemon.New(c, dockerBinary, dockerdBinary, testdaemon.WithEnvironment(testEnv.Execution))
 	discoveryBackend := "consul://consuladdr:consulport/some/path"
 	discoveryAdvertise := "1.1.1.1:2375"
 	d.Start(c, fmt.Sprintf("--cluster-store=%s", discoveryBackend), fmt.Sprintf("--cluster-advertise=%s", discoveryAdvertise))
@@ -90,9 +89,7 @@ func (s *DockerSuite) TestInfoDiscoveryBackend(c *check.C) {
 func (s *DockerSuite) TestInfoDiscoveryInvalidAdvertise(c *check.C) {
 	testRequires(c, SameHostDaemon, DaemonIsLinux)
 
-	d := daemon.New(c, dockerBinary, dockerdBinary, daemon.Config{
-		Experimental: testEnv.ExperimentalDaemon(),
-	})
+	d := daemon.New(c, dockerBinary, dockerdBinary, testdaemon.WithEnvironment(testEnv.Execution))
 	discoveryBackend := "consul://consuladdr:consulport/some/path"
 
 	// --cluster-advertise with an invalid string is an error
@@ -109,9 +106,7 @@ func (s *DockerSuite) TestInfoDiscoveryInvalidAdvertise(c *check.C) {
 func (s *DockerSuite) TestInfoDiscoveryAdvertiseInterfaceName(c *check.C) {
 	testRequires(c, SameHostDaemon, Network, DaemonIsLinux)
 
-	d := daemon.New(c, dockerBinary, dockerdBinary, daemon.Config{
-		Experimental: testEnv.ExperimentalDaemon(),
-	})
+	d := daemon.New(c, dockerBinary, dockerdBinary, testdaemon.WithEnvironment(testEnv.Execution))
 	discoveryBackend := "consul://consuladdr:consulport/some/path"
 	discoveryAdvertise := "eth0"
 
@@ -182,9 +177,7 @@ func (s *DockerSuite) TestInfoDisplaysStoppedContainers(c *check.C) {
 func (s *DockerSuite) TestInfoDebug(c *check.C) {
 	testRequires(c, SameHostDaemon, DaemonIsLinux)
 
-	d := daemon.New(c, dockerBinary, dockerdBinary, daemon.Config{
-		Experimental: testEnv.ExperimentalDaemon(),
-	})
+	d := daemon.New(c, dockerBinary, dockerdBinary, testdaemon.WithEnvironment(testEnv.Execution))
 	d.Start(c, "--debug")
 	defer d.Stop(c)
 
@@ -205,9 +198,7 @@ func (s *DockerSuite) TestInsecureRegistries(c *check.C) {
 	registryCIDR := "192.168.1.0/24"
 	registryHost := "insecurehost.com:5000"
 
-	d := daemon.New(c, dockerBinary, dockerdBinary, daemon.Config{
-		Experimental: testEnv.ExperimentalDaemon(),
-	})
+	d := daemon.New(c, dockerBinary, dockerdBinary, testdaemon.WithEnvironment(testEnv.Execution))
 	d.Start(c, "--insecure-registry="+registryCIDR, "--insecure-registry="+registryHost)
 	defer d.Stop(c)
 
@@ -231,17 +222,6 @@ func (s *DockerDaemonSuite) TestRegistryMirrors(c *check.C) {
 	c.Assert(out, checker.Contains, "Registry Mirrors:\n")
 	c.Assert(out, checker.Contains, fmt.Sprintf(" %s", registryMirror1))
 	c.Assert(out, checker.Contains, fmt.Sprintf(" %s", registryMirror2))
-}
-
-// Test case for #24392
-func (s *DockerDaemonSuite) TestInfoLabels(c *check.C) {
-	testRequires(c, SameHostDaemon, DaemonIsLinux)
-
-	s.d.Start(c, "--label", `test.empty=`, "--label", `test.empty=`, "--label", `test.label="1"`, "--label", `test.label="2"`)
-
-	out, err := s.d.Cmd("info")
-	c.Assert(err, checker.IsNil)
-	c.Assert(out, checker.Contains, "WARNING: labels with duplicate keys and conflicting values have been deprecated")
 }
 
 func existingContainerStates(c *check.C) map[string]int {

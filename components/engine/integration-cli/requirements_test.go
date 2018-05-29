@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/integration-cli/requirement"
+	"github.com/docker/docker/internal/test/registry"
 )
 
 func ArchitectureIsNot(arch string) bool {
@@ -112,22 +113,6 @@ func Apparmor() bool {
 	return err == nil && len(buf) > 1 && buf[0] == 'Y'
 }
 
-func NotaryHosting() bool {
-	// for now notary binary is built only if we're running inside
-	// container through `make test`. Figure that out by testing if
-	// notary-server binary is in PATH.
-	_, err := exec.LookPath(notaryServerBinary)
-	return err == nil
-}
-
-func NotaryServerHosting() bool {
-	// for now notary-server binary is built only if we're running inside
-	// container through `make test`. Figure that out by testing if
-	// notary-server binary is in PATH.
-	_, err := exec.LookPath(notaryServerBinary)
-	return err == nil
-}
-
 func Devicemapper() bool {
 	return strings.HasPrefix(testEnv.DaemonInfo.Driver, "devicemapper")
 }
@@ -197,6 +182,15 @@ func IsolationIsHyperv() bool {
 
 func IsolationIsProcess() bool {
 	return IsolationIs("process")
+}
+
+// RegistryHosting returns wether the host can host a registry (v2) or not
+func RegistryHosting() bool {
+	// for now registry binary is built only if we're running inside
+	// container through `make test`. Figure that out by testing if
+	// registry binary is in PATH.
+	_, err := exec.LookPath(registry.V2binary)
+	return err == nil
 }
 
 // testRequires checks if the environment satisfies the requirements

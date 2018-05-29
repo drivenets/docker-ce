@@ -1,8 +1,7 @@
-package daemon
+package daemon // import "github.com/docker/docker/daemon"
 
 import (
 	"io"
-	"runtime"
 
 	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/api/types"
@@ -13,140 +12,133 @@ import (
 	"github.com/docker/docker/pkg/containerfs"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/stringid"
+	"github.com/docker/docker/pkg/system"
 	"github.com/docker/docker/registry"
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
-type releaseableLayer struct {
+type roLayer struct {
 	released   bool
 	layerStore layer.Store
 	roLayer    layer.Layer
-	rwLayer    layer.RWLayer
 }
 
-func (rl *releaseableLayer) Mount() (containerfs.ContainerFS, error) {
-	var err error
-	var mountPath containerfs.ContainerFS
+func (l *roLayer) DiffID() layer.DiffID {
+	if l.roLayer == nil {
+		return layer.DigestSHA256EmptyTar
+	}
+	return l.roLayer.DiffID()
+}
+
+func (l *roLayer) Release() error {
+	if l.released {
+		return nil
+	}
+	if l.roLayer != nil {
+		metadata, err := l.layerStore.Release(l.roLayer)
+		layer.LogReleaseMetadata(metadata)
+		if err != nil {
+			return errors.Wrap(err, "failed to release ROLayer")
+		}
+	}
+	l.roLayer = nil
+	l.released = true
+	return nil
+}
+
+func (l *roLayer) NewRWLayer() (builder.RWLayer, error) {
 	var chainID layer.ChainID
-	if rl.roLayer != nil {
-		chainID = rl.roLayer.ChainID()
+	if l.roLayer != nil {
+		chainID = l.roLayer.ChainID()
 	}
 
 	mountID := stringid.GenerateRandomID()
-	rl.rwLayer, err = rl.layerStore.CreateRWLayer(mountID, chainID, nil)
+	newLayer, err := l.layerStore.CreateRWLayer(mountID, chainID, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create rwlayer")
 	}
 
-	mountPath, err = rl.rwLayer.Mount("")
+	rwLayer := &rwLayer{layerStore: l.layerStore, rwLayer: newLayer}
+
+	fs, err := newLayer.Mount("")
 	if err != nil {
-		// Clean up the layer if we fail to mount it here.
-		metadata, err := rl.layerStore.ReleaseRWLayer(rl.rwLayer)
-		layer.LogReleaseMetadata(metadata)
-		if err != nil {
-			logrus.Errorf("Failed to release RWLayer: %s", err)
-		}
-		rl.rwLayer = nil
+		rwLayer.Release()
 		return nil, err
 	}
 
-	return mountPath, nil
+	rwLayer.fs = fs
+
+	return rwLayer, nil
 }
 
-func (rl *releaseableLayer) Commit(os string) (builder.ReleaseableLayer, error) {
-	var chainID layer.ChainID
-	if rl.roLayer != nil {
-		chainID = rl.roLayer.ChainID()
-	}
+type rwLayer struct {
+	released   bool
+	layerStore layer.Store
+	rwLayer    layer.RWLayer
+	fs         containerfs.ContainerFS
+}
 
-	stream, err := rl.rwLayer.TarStream()
+func (l *rwLayer) Root() containerfs.ContainerFS {
+	return l.fs
+}
+
+func (l *rwLayer) Commit() (builder.ROLayer, error) {
+	stream, err := l.rwLayer.TarStream()
 	if err != nil {
 		return nil, err
 	}
 	defer stream.Close()
 
-	newLayer, err := rl.layerStore.Register(stream, chainID, layer.OS(os))
+	var chainID layer.ChainID
+	if parent := l.rwLayer.Parent(); parent != nil {
+		chainID = parent.ChainID()
+	}
+
+	newLayer, err := l.layerStore.Register(stream, chainID)
 	if err != nil {
 		return nil, err
 	}
-
-	if layer.IsEmpty(newLayer.DiffID()) {
-		_, err := rl.layerStore.Release(newLayer)
-		return &releaseableLayer{layerStore: rl.layerStore}, err
-	}
-	return &releaseableLayer{layerStore: rl.layerStore, roLayer: newLayer}, nil
+	// TODO: An optimization would be to handle empty layers before returning
+	return &roLayer{layerStore: l.layerStore, roLayer: newLayer}, nil
 }
 
-func (rl *releaseableLayer) DiffID() layer.DiffID {
-	if rl.roLayer == nil {
-		return layer.DigestSHA256EmptyTar
-	}
-	return rl.roLayer.DiffID()
-}
-
-func (rl *releaseableLayer) Release() error {
-	if rl.released {
+func (l *rwLayer) Release() error {
+	if l.released {
 		return nil
 	}
-	if err := rl.releaseRWLayer(); err != nil {
-		// Best effort attempt at releasing read-only layer before returning original error.
-		rl.releaseROLayer()
-		return err
+
+	if l.fs != nil {
+		if err := l.rwLayer.Unmount(); err != nil {
+			return errors.Wrap(err, "failed to unmount RWLayer")
+		}
+		l.fs = nil
 	}
-	if err := rl.releaseROLayer(); err != nil {
-		return err
+
+	metadata, err := l.layerStore.ReleaseRWLayer(l.rwLayer)
+	layer.LogReleaseMetadata(metadata)
+	if err != nil {
+		return errors.Wrap(err, "failed to release RWLayer")
 	}
-	rl.released = true
+	l.released = true
 	return nil
 }
 
-func (rl *releaseableLayer) releaseRWLayer() error {
-	if rl.rwLayer == nil {
-		return nil
-	}
-	if err := rl.rwLayer.Unmount(); err != nil {
-		logrus.Errorf("Failed to unmount RWLayer: %s", err)
-		return err
-	}
-	metadata, err := rl.layerStore.ReleaseRWLayer(rl.rwLayer)
-	layer.LogReleaseMetadata(metadata)
-	if err != nil {
-		logrus.Errorf("Failed to release RWLayer: %s", err)
-	}
-	rl.rwLayer = nil
-	return err
-}
-
-func (rl *releaseableLayer) releaseROLayer() error {
-	if rl.roLayer == nil {
-		return nil
-	}
-	metadata, err := rl.layerStore.Release(rl.roLayer)
-	layer.LogReleaseMetadata(metadata)
-	if err != nil {
-		logrus.Errorf("Failed to release ROLayer: %s", err)
-	}
-	rl.roLayer = nil
-	return err
-}
-
-func newReleasableLayerForImage(img *image.Image, layerStore layer.Store) (builder.ReleaseableLayer, error) {
+func newROLayerForImage(img *image.Image, layerStore layer.Store) (builder.ROLayer, error) {
 	if img == nil || img.RootFS.ChainID() == "" {
-		return &releaseableLayer{layerStore: layerStore}, nil
+		return &roLayer{layerStore: layerStore}, nil
 	}
 	// Hold a reference to the image layer so that it can't be removed before
 	// it is released
-	roLayer, err := layerStore.Get(img.RootFS.ChainID())
+	layer, err := layerStore.Get(img.RootFS.ChainID())
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get layer for image %s", img.ImageID())
 	}
-	return &releaseableLayer{layerStore: layerStore, roLayer: roLayer}, nil
+	return &roLayer{layerStore: layerStore, roLayer: layer}, nil
 }
 
 // TODO: could this use the regular daemon PullImage ?
-func (daemon *Daemon) pullForBuilder(ctx context.Context, name string, authConfigs map[string]types.AuthConfig, output io.Writer, platform string) (*image.Image, error) {
+func (daemon *Daemon) pullForBuilder(ctx context.Context, name string, authConfigs map[string]types.AuthConfig, output io.Writer, os string) (*image.Image, error) {
 	ref, err := reference.ParseNormalizedNamed(name)
 	if err != nil {
 		return nil, err
@@ -165,7 +157,7 @@ func (daemon *Daemon) pullForBuilder(ctx context.Context, name string, authConfi
 		pullRegistryAuth = &resolvedConfig
 	}
 
-	if err := daemon.pullImageWithReference(ctx, ref, platform, nil, pullRegistryAuth, output); err != nil {
+	if err := daemon.pullImageWithReference(ctx, ref, os, nil, pullRegistryAuth, output); err != nil {
 		return nil, err
 	}
 	return daemon.GetImage(name)
@@ -174,9 +166,12 @@ func (daemon *Daemon) pullForBuilder(ctx context.Context, name string, authConfi
 // GetImageAndReleasableLayer returns an image and releaseable layer for a reference or ID.
 // Every call to GetImageAndReleasableLayer MUST call releasableLayer.Release() to prevent
 // leaking of layers.
-func (daemon *Daemon) GetImageAndReleasableLayer(ctx context.Context, refOrID string, opts backend.GetImageAndLayerOptions) (builder.Image, builder.ReleaseableLayer, error) {
+func (daemon *Daemon) GetImageAndReleasableLayer(ctx context.Context, refOrID string, opts backend.GetImageAndLayerOptions) (builder.Image, builder.ROLayer, error) {
 	if refOrID == "" {
-		layer, err := newReleasableLayerForImage(nil, daemon.stores[opts.OS].layerStore)
+		if !system.IsOSSupported(opts.OS) {
+			return nil, nil, system.ErrNotSupportedOperatingSystem
+		}
+		layer, err := newROLayerForImage(nil, daemon.layerStores[opts.OS])
 		return nil, layer, err
 	}
 
@@ -187,7 +182,10 @@ func (daemon *Daemon) GetImageAndReleasableLayer(ctx context.Context, refOrID st
 		}
 		// TODO: shouldn't we error out if error is different from "not found" ?
 		if image != nil {
-			layer, err := newReleasableLayerForImage(image, daemon.stores[opts.OS].layerStore)
+			if !system.IsOSSupported(image.OperatingSystem()) {
+				return nil, nil, system.ErrNotSupportedOperatingSystem
+			}
+			layer, err := newROLayerForImage(image, daemon.layerStores[image.OperatingSystem()])
 			return image, layer, err
 		}
 	}
@@ -196,29 +194,29 @@ func (daemon *Daemon) GetImageAndReleasableLayer(ctx context.Context, refOrID st
 	if err != nil {
 		return nil, nil, err
 	}
-	layer, err := newReleasableLayerForImage(image, daemon.stores[opts.OS].layerStore)
+	if !system.IsOSSupported(image.OperatingSystem()) {
+		return nil, nil, system.ErrNotSupportedOperatingSystem
+	}
+	layer, err := newROLayerForImage(image, daemon.layerStores[image.OperatingSystem()])
 	return image, layer, err
 }
 
 // CreateImage creates a new image by adding a config and ID to the image store.
 // This is similar to LoadImage() except that it receives JSON encoded bytes of
 // an image instead of a tar archive.
-func (daemon *Daemon) CreateImage(config []byte, parent string, platform string) (builder.Image, error) {
-	if platform == "" {
-		platform = runtime.GOOS
-	}
-	id, err := daemon.stores[platform].imageStore.Create(config)
+func (daemon *Daemon) CreateImage(config []byte, parent string) (builder.Image, error) {
+	id, err := daemon.imageStore.Create(config)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create image")
 	}
 
 	if parent != "" {
-		if err := daemon.stores[platform].imageStore.SetParent(id, image.ID(parent)); err != nil {
+		if err := daemon.imageStore.SetParent(id, image.ID(parent)); err != nil {
 			return nil, errors.Wrapf(err, "failed to set parent %s", parent)
 		}
 	}
 
-	return daemon.stores[platform].imageStore.Get(id)
+	return daemon.imageStore.Get(id)
 }
 
 // IDMappings returns uid/gid mappings for the builder

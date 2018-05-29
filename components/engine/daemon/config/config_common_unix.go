@@ -1,6 +1,6 @@
-// +build solaris linux freebsd
+// +build linux freebsd
 
-package config
+package config // import "github.com/docker/docker/daemon/config"
 
 import (
 	"net"

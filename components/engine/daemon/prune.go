@@ -1,9 +1,8 @@
-package daemon
+package daemon // import "github.com/docker/docker/daemon"
 
 import (
 	"fmt"
 	"regexp"
-	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -11,10 +10,10 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	timetypes "github.com/docker/docker/api/types/time"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/layer"
 	"github.com/docker/docker/pkg/directory"
-	"github.com/docker/docker/pkg/system"
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/docker/volume"
 	"github.com/docker/libnetwork"
@@ -162,12 +161,6 @@ func (daemon *Daemon) VolumesPrune(ctx context.Context, pruneFilters filters.Arg
 
 // ImagesPrune removes unused images
 func (daemon *Daemon) ImagesPrune(ctx context.Context, pruneFilters filters.Args) (*types.ImagesPruneReport, error) {
-	// TODO @jhowardmsft LCOW Support: This will need revisiting later.
-	platform := runtime.GOOS
-	if system.LCOWSupported() {
-		platform = "linux"
-	}
-
 	if !atomic.CompareAndSwapInt32(&daemon.pruneRunning, 0, 1) {
 		return nil, errPruneRunning
 	}
@@ -197,23 +190,18 @@ func (daemon *Daemon) ImagesPrune(ctx context.Context, pruneFilters filters.Args
 
 	var allImages map[image.ID]*image.Image
 	if danglingOnly {
-		allImages = daemon.stores[platform].imageStore.Heads()
+		allImages = daemon.imageStore.Heads()
 	} else {
-		allImages = daemon.stores[platform].imageStore.Map()
-	}
-	allContainers := daemon.List()
-	imageRefs := map[string]bool{}
-	for _, c := range allContainers {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-			imageRefs[c.ID] = true
-		}
+		allImages = daemon.imageStore.Map()
 	}
 
 	// Filter intermediary images and get their unique size
-	allLayers := daemon.stores[platform].layerStore.Map()
+	allLayers := make(map[layer.ChainID]layer.Layer)
+	for _, ls := range daemon.layerStores {
+		for k, v := range ls.Map() {
+			allLayers[k] = v
+		}
+	}
 	topImages := map[image.ID]*image.Image{}
 	for id, img := range allImages {
 		select {
@@ -221,7 +209,7 @@ func (daemon *Daemon) ImagesPrune(ctx context.Context, pruneFilters filters.Args
 			return nil, ctx.Err()
 		default:
 			dgst := digest.Digest(id)
-			if len(daemon.referenceStore.References(dgst)) == 0 && len(daemon.stores[platform].imageStore.Children(id)) != 0 {
+			if len(daemon.referenceStore.References(dgst)) == 0 && len(daemon.imageStore.Children(id)) != 0 {
 				continue
 			}
 			if !until.IsZero() && img.Created.After(until) {
@@ -245,14 +233,8 @@ deleteImagesLoop:
 		default:
 		}
 
-		dgst := digest.Digest(id)
-		hex := dgst.Hex()
-		if _, ok := imageRefs[hex]; ok {
-			continue
-		}
-
 		deletedImages := []types.ImageDeleteResponseItem{}
-		refs := daemon.referenceStore.References(dgst)
+		refs := daemon.referenceStore.References(id.Digest())
 		if len(refs) > 0 {
 			shouldDelete := !danglingOnly
 			if !shouldDelete {
@@ -271,17 +253,16 @@ deleteImagesLoop:
 			if shouldDelete {
 				for _, ref := range refs {
 					imgDel, err := daemon.ImageDelete(ref.String(), false, true)
-					if err != nil {
-						logrus.Warnf("could not delete reference %s: %v", ref.String(), err)
+					if imageDeleteFailed(ref.String(), err) {
 						continue
 					}
 					deletedImages = append(deletedImages, imgDel...)
 				}
 			}
 		} else {
+			hex := id.Digest().Hex()
 			imgDel, err := daemon.ImageDelete(hex, false, true)
-			if err != nil {
-				logrus.Warnf("could not delete image %s: %v", hex, err)
+			if imageDeleteFailed(hex, err) {
 				continue
 			}
 			deletedImages = append(deletedImages, imgDel...)
@@ -310,6 +291,18 @@ deleteImagesLoop:
 	}
 
 	return rep, nil
+}
+
+func imageDeleteFailed(ref string, err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errdefs.IsConflict(err):
+		return true
+	default:
+		logrus.Warnf("failed to prune image %s: %v", ref, err)
+		return true
+	}
 }
 
 // localNetworksPrune removes unused local networks

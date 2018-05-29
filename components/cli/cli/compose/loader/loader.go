@@ -12,6 +12,7 @@ import (
 	"github.com/docker/cli/cli/compose/template"
 	"github.com/docker/cli/cli/compose/types"
 	"github.com/docker/cli/opts"
+	"github.com/docker/docker/api/types/versions"
 	"github.com/docker/go-connections/nat"
 	units "github.com/docker/go-units"
 	shellwords "github.com/mattn/go-shellwords"
@@ -44,26 +45,43 @@ func Load(configDetails types.ConfigDetails) (*types.Config, error) {
 	if len(configDetails.ConfigFiles) < 1 {
 		return nil, errors.Errorf("No files specified")
 	}
-	if len(configDetails.ConfigFiles) > 1 {
-		return nil, errors.Errorf("Multiple files are not yet supported")
+
+	configs := []*types.Config{}
+
+	for _, file := range configDetails.ConfigFiles {
+		configDict := file.Config
+		version := schema.Version(configDict)
+		if configDetails.Version == "" {
+			configDetails.Version = version
+		}
+		if configDetails.Version != version {
+			return nil, errors.Errorf("version mismatched between two composefiles : %v and %v", configDetails.Version, version)
+		}
+
+		if err := validateForbidden(configDict); err != nil {
+			return nil, err
+		}
+
+		var err error
+		configDict, err = interpolateConfig(configDict, configDetails.LookupEnv)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := schema.Validate(configDict, configDetails.Version); err != nil {
+			return nil, err
+		}
+
+		cfg, err := loadSections(configDict, configDetails)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Filename = file.Filename
+
+		configs = append(configs, cfg)
 	}
 
-	configDict := getConfigDict(configDetails)
-
-	if err := validateForbidden(configDict); err != nil {
-		return nil, err
-	}
-
-	var err error
-	configDict, err = interpolateConfig(configDict, configDetails.LookupEnv)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := schema.Validate(configDict, schema.Version(configDict)); err != nil {
-		return nil, err
-	}
-	return loadSections(configDict, configDetails)
+	return merge(configs)
 }
 
 func validateForbidden(configDict map[string]interface{}) error {
@@ -80,7 +98,9 @@ func validateForbidden(configDict map[string]interface{}) error {
 
 func loadSections(config map[string]interface{}, configDetails types.ConfigDetails) (*types.Config, error) {
 	var err error
-	cfg := types.Config{}
+	cfg := types.Config{
+		Version: schema.Version(config),
+	}
 
 	var loaders = []struct {
 		key string
@@ -96,28 +116,28 @@ func loadSections(config map[string]interface{}, configDetails types.ConfigDetai
 		{
 			key: "networks",
 			fnc: func(config map[string]interface{}) error {
-				cfg.Networks, err = LoadNetworks(config)
+				cfg.Networks, err = LoadNetworks(config, configDetails.Version)
 				return err
 			},
 		},
 		{
 			key: "volumes",
 			fnc: func(config map[string]interface{}) error {
-				cfg.Volumes, err = LoadVolumes(config)
+				cfg.Volumes, err = LoadVolumes(config, configDetails.Version)
 				return err
 			},
 		},
 		{
 			key: "secrets",
 			fnc: func(config map[string]interface{}) error {
-				cfg.Secrets, err = LoadSecrets(config, configDetails.WorkingDir)
+				cfg.Secrets, err = LoadSecrets(config, configDetails)
 				return err
 			},
 		},
 		{
 			key: "configs",
 			fnc: func(config map[string]interface{}) error {
-				cfg.Configs, err = LoadConfigObjs(config, configDetails.WorkingDir)
+				cfg.Configs, err = LoadConfigObjs(config, configDetails)
 				return err
 			},
 		},
@@ -140,14 +160,16 @@ func getSection(config map[string]interface{}, key string) map[string]interface{
 
 // GetUnsupportedProperties returns the list of any unsupported properties that are
 // used in the Compose files.
-func GetUnsupportedProperties(configDetails types.ConfigDetails) []string {
+func GetUnsupportedProperties(configDicts ...map[string]interface{}) []string {
 	unsupported := map[string]bool{}
 
-	for _, service := range getServices(getConfigDict(configDetails)) {
-		serviceDict := service.(map[string]interface{})
-		for _, property := range types.UnsupportedProperties {
-			if _, isSet := serviceDict[property]; isSet {
-				unsupported[property] = true
+	for _, configDict := range configDicts {
+		for _, service := range getServices(configDict) {
+			serviceDict := service.(map[string]interface{})
+			for _, property := range types.UnsupportedProperties {
+				if _, isSet := serviceDict[property]; isSet {
+					unsupported[property] = true
+				}
 			}
 		}
 	}
@@ -166,8 +188,17 @@ func sortedKeys(set map[string]bool) []string {
 
 // GetDeprecatedProperties returns the list of any deprecated properties that
 // are used in the compose files.
-func GetDeprecatedProperties(configDetails types.ConfigDetails) map[string]string {
-	return getProperties(getServices(getConfigDict(configDetails)), types.DeprecatedProperties)
+func GetDeprecatedProperties(configDicts ...map[string]interface{}) map[string]string {
+	deprecated := map[string]string{}
+
+	for _, configDict := range configDicts {
+		deprecatedProperties := getProperties(getServices(configDict), types.DeprecatedProperties)
+		for key, value := range deprecatedProperties {
+			deprecated[key] = value
+		}
+	}
+
+	return deprecated
 }
 
 func getProperties(services map[string]interface{}, propertyMap map[string]string) map[string]string {
@@ -194,11 +225,6 @@ type ForbiddenPropertiesError struct {
 
 func (e *ForbiddenPropertiesError) Error() string {
 	return "Configuration contains forbidden properties"
-}
-
-// TODO: resolve multiple files into a single config
-func getConfigDict(configDetails types.ConfigDetails) map[string]interface{} {
-	return configDetails.ConfigFiles[0].Config
 }
 
 func getServices(configDict map[string]interface{}) map[string]interface{} {
@@ -335,7 +361,9 @@ func LoadService(name string, serviceDict map[string]interface{}, workingDir str
 		return nil, err
 	}
 
-	resolveVolumePaths(serviceConfig.Volumes, workingDir, lookupEnv)
+	if err := resolveVolumePaths(serviceConfig.Volumes, workingDir, lookupEnv); err != nil {
+		return nil, err
+	}
 	return serviceConfig, nil
 }
 
@@ -374,10 +402,14 @@ func resolveEnvironment(serviceConfig *types.ServiceConfig, workingDir string, l
 	return nil
 }
 
-func resolveVolumePaths(volumes []types.ServiceVolumeConfig, workingDir string, lookupEnv template.Mapping) {
+func resolveVolumePaths(volumes []types.ServiceVolumeConfig, workingDir string, lookupEnv template.Mapping) error {
 	for i, volume := range volumes {
 		if volume.Type != "bind" {
 			continue
+		}
+
+		if volume.Source == "" {
+			return errors.New(`invalid mount config for type "bind": field Source must not be empty`)
 		}
 
 		filePath := expandUser(volume.Source, lookupEnv)
@@ -392,6 +424,7 @@ func resolveVolumePaths(volumes []types.ServiceVolumeConfig, workingDir string, 
 		volume.Source = filePath
 		volumes[i] = volume
 	}
+	return nil
 }
 
 // TODO: make this more robust
@@ -423,17 +456,30 @@ func transformUlimits(data interface{}) (interface{}, error) {
 
 // LoadNetworks produces a NetworkConfig map from a compose file Dict
 // the source Dict is not validated if directly used. Use Load() to enable validation
-func LoadNetworks(source map[string]interface{}) (map[string]types.NetworkConfig, error) {
+func LoadNetworks(source map[string]interface{}, version string) (map[string]types.NetworkConfig, error) {
 	networks := make(map[string]types.NetworkConfig)
 	err := transform(source, &networks)
 	if err != nil {
 		return networks, err
 	}
 	for name, network := range networks {
-		if network.External.External && network.External.Name == "" {
-			network.External.Name = name
-			networks[name] = network
+		if !network.External.External {
+			continue
 		}
+		switch {
+		case network.External.Name != "":
+			if network.Name != "" {
+				return nil, errors.Errorf("network %s: network.external.name and network.name conflict; only use network.name", name)
+			}
+			if versions.GreaterThanOrEqualTo(version, "3.5") {
+				logrus.Warnf("network %s: network.external.name is deprecated in favor of network.name", name)
+			}
+			network.Name = network.External.Name
+			network.External.Name = ""
+		case network.Name == "":
+			network.Name = name
+		}
+		networks[name] = network
 	}
 	return networks, nil
 }
@@ -446,74 +492,98 @@ func externalVolumeError(volume, key string) error {
 
 // LoadVolumes produces a VolumeConfig map from a compose file Dict
 // the source Dict is not validated if directly used. Use Load() to enable validation
-func LoadVolumes(source map[string]interface{}) (map[string]types.VolumeConfig, error) {
+func LoadVolumes(source map[string]interface{}, version string) (map[string]types.VolumeConfig, error) {
 	volumes := make(map[string]types.VolumeConfig)
-	err := transform(source, &volumes)
-	if err != nil {
+	if err := transform(source, &volumes); err != nil {
 		return volumes, err
 	}
-	for name, volume := range volumes {
-		if volume.External.External {
-			if volume.Driver != "" {
-				return nil, externalVolumeError(name, "driver")
-			}
-			if len(volume.DriverOpts) > 0 {
-				return nil, externalVolumeError(name, "driver_opts")
-			}
-			if len(volume.Labels) > 0 {
-				return nil, externalVolumeError(name, "labels")
-			}
-			if volume.External.Name == "" {
-				volume.External.Name = name
-				volumes[name] = volume
-			} else {
-				logrus.Warnf("volume %s: volume.external.name is deprecated in favor of volume.name", name)
 
-				if volume.Name != "" {
-					return nil, errors.Errorf("volume %s: volume.external.name and volume.name conflict; only use volume.name", name)
-				}
-			}
+	for name, volume := range volumes {
+		if !volume.External.External {
+			continue
 		}
+		switch {
+		case volume.Driver != "":
+			return nil, externalVolumeError(name, "driver")
+		case len(volume.DriverOpts) > 0:
+			return nil, externalVolumeError(name, "driver_opts")
+		case len(volume.Labels) > 0:
+			return nil, externalVolumeError(name, "labels")
+		case volume.External.Name != "":
+			if volume.Name != "" {
+				return nil, errors.Errorf("volume %s: volume.external.name and volume.name conflict; only use volume.name", name)
+			}
+			if versions.GreaterThanOrEqualTo(version, "3.4") {
+				logrus.Warnf("volume %s: volume.external.name is deprecated in favor of volume.name", name)
+			}
+			volume.Name = volume.External.Name
+			volume.External.Name = ""
+		case volume.Name == "":
+			volume.Name = name
+		}
+		volumes[name] = volume
 	}
 	return volumes, nil
 }
 
 // LoadSecrets produces a SecretConfig map from a compose file Dict
 // the source Dict is not validated if directly used. Use Load() to enable validation
-func LoadSecrets(source map[string]interface{}, workingDir string) (map[string]types.SecretConfig, error) {
+func LoadSecrets(source map[string]interface{}, details types.ConfigDetails) (map[string]types.SecretConfig, error) {
 	secrets := make(map[string]types.SecretConfig)
 	if err := transform(source, &secrets); err != nil {
 		return secrets, err
 	}
 	for name, secret := range secrets {
-		if secret.External.External && secret.External.Name == "" {
-			secret.External.Name = name
-			secrets[name] = secret
+		obj, err := loadFileObjectConfig(name, "secret", types.FileObjectConfig(secret), details)
+		if err != nil {
+			return nil, err
 		}
-		if secret.File != "" {
-			secret.File = absPath(workingDir, secret.File)
-		}
+		secrets[name] = types.SecretConfig(obj)
 	}
 	return secrets, nil
 }
 
 // LoadConfigObjs produces a ConfigObjConfig map from a compose file Dict
 // the source Dict is not validated if directly used. Use Load() to enable validation
-func LoadConfigObjs(source map[string]interface{}, workingDir string) (map[string]types.ConfigObjConfig, error) {
+func LoadConfigObjs(source map[string]interface{}, details types.ConfigDetails) (map[string]types.ConfigObjConfig, error) {
 	configs := make(map[string]types.ConfigObjConfig)
 	if err := transform(source, &configs); err != nil {
 		return configs, err
 	}
 	for name, config := range configs {
-		if config.External.External && config.External.Name == "" {
-			config.External.Name = name
-			configs[name] = config
+		obj, err := loadFileObjectConfig(name, "config", types.FileObjectConfig(config), details)
+		if err != nil {
+			return nil, err
 		}
-		if config.File != "" {
-			config.File = absPath(workingDir, config.File)
-		}
+		configs[name] = types.ConfigObjConfig(obj)
 	}
 	return configs, nil
+}
+
+func loadFileObjectConfig(name string, objType string, obj types.FileObjectConfig, details types.ConfigDetails) (types.FileObjectConfig, error) {
+	// if "external: true"
+	if obj.External.External {
+		// handle deprecated external.name
+		if obj.External.Name != "" {
+			if obj.Name != "" {
+				return obj, errors.Errorf("%[1]s %[2]s: %[1]s.external.name and %[1]s.name conflict; only use %[1]s.name", objType, name)
+			}
+			if versions.GreaterThanOrEqualTo(details.Version, "3.5") {
+				logrus.Warnf("%[1]s %[2]s: %[1]s.external.name is deprecated in favor of %[1]s.name", objType, name)
+			}
+			obj.Name = obj.External.Name
+			obj.External.Name = ""
+		} else {
+			if obj.Name == "" {
+				obj.Name = name
+			}
+		}
+		// if not "external: true"
+	} else {
+		obj.File = absPath(details.WorkingDir, obj.File)
+	}
+
+	return obj, nil
 }
 
 func absPath(workingDir string, filePath string) string {

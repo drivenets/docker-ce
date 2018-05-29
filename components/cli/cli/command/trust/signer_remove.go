@@ -80,7 +80,7 @@ func isLastSignerForReleases(roleWithSig data.Role, allRoles []client.RoleWithSi
 
 func removeSingleSigner(cli command.Cli, repoName, signerName string, forceYes bool) error {
 	ctx := context.Background()
-	imgRefAndAuth, err := trust.GetImageReferencesAndAuth(ctx, image.AuthResolver(cli), repoName)
+	imgRefAndAuth, err := trust.GetImageReferencesAndAuth(ctx, nil, image.AuthResolver(cli), repoName)
 	if err != nil {
 		return err
 	}
@@ -131,8 +131,5 @@ func removeSingleSigner(cli command.Cli, repoName, signerName string, forceYes b
 	if err = notaryRepo.RemoveDelegationRole(signerDelegation); err != nil {
 		return err
 	}
-	if err = notaryRepo.Publish(); err != nil {
-		return err
-	}
-	return nil
+	return notaryRepo.Publish()
 }

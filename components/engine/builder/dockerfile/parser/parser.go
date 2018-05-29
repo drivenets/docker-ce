@@ -1,5 +1,5 @@
 // Package parser implements a parser and parse tree dumper for Dockerfiles.
-package parser
+package parser // import "github.com/docker/docker/builder/dockerfile/parser"
 
 import (
 	"bufio"
@@ -321,7 +321,7 @@ func Parse(rwc io.Reader) (*Result, error) {
 		Warnings:    warnings,
 		EscapeToken: d.escapeToken,
 		OS:          d.platformToken,
-	}, nil
+	}, handleScannerError(scanner.Err())
 }
 
 func trimComments(src []byte) []byte {
@@ -357,4 +357,13 @@ func processLine(d *Directive, token []byte, stripLeftWhitespace bool) ([]byte, 
 		token = trimWhitespace(token)
 	}
 	return trimComments(token), d.possibleParserDirective(string(token))
+}
+
+func handleScannerError(err error) error {
+	switch err {
+	case bufio.ErrTooLong:
+		return errors.Errorf("dockerfile line greater than max allowed size of %d", bufio.MaxScanTokenSize-1)
+	default:
+		return err
+	}
 }

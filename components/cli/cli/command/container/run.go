@@ -25,9 +25,9 @@ import (
 )
 
 type runOptions struct {
+	createOptions
 	detach     bool
 	sigProxy   bool
-	name       string
 	detachKeys string
 }
 
@@ -62,7 +62,8 @@ func NewRunCommand(dockerCli command.Cli) *cobra.Command {
 	// with hostname
 	flags.Bool("help", false, "Print usage")
 
-	command.AddTrustVerificationFlags(flags)
+	command.AddPlatformFlag(flags, &opts.platform)
+	command.AddTrustVerificationFlags(flags, &opts.untrusted, dockerCli.ContentTrustEnabled())
 	copts = addFlags(flags)
 	return cmd
 }
@@ -160,7 +161,7 @@ func runContainer(dockerCli command.Cli, opts *runOptions, copts *containerOptio
 
 	ctx, cancelFun := context.WithCancel(context.Background())
 
-	createResponse, err := createContainer(ctx, dockerCli, containerConfig, opts.name)
+	createResponse, err := createContainer(ctx, dockerCli, containerConfig, &opts.createOptions)
 	if err != nil {
 		reportError(stderr, cmdPath, err.Error(), true)
 		return runStartContainerErr(err)

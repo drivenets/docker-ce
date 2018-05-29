@@ -18,21 +18,31 @@ import (
 	"github.com/theupdateframework/notary/tuf/data"
 )
 
+type signOptions struct {
+	local     bool
+	imageName string
+}
+
 func newSignCommand(dockerCli command.Cli) *cobra.Command {
+	options := signOptions{}
 	cmd := &cobra.Command{
 		Use:   "sign IMAGE:TAG",
 		Short: "Sign an image",
 		Args:  cli.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSignImage(dockerCli, args[0])
+			options.imageName = args[0]
+			return runSignImage(dockerCli, options)
 		},
 	}
+	flags := cmd.Flags()
+	flags.BoolVar(&options.local, "local", false, "Sign a locally tagged image")
 	return cmd
 }
 
-func runSignImage(cli command.Cli, imageName string) error {
+func runSignImage(cli command.Cli, options signOptions) error {
+	imageName := options.imageName
 	ctx := context.Background()
-	imgRefAndAuth, err := trust.GetImageReferencesAndAuth(ctx, image.AuthResolver(cli), imageName)
+	imgRefAndAuth, err := trust.GetImageReferencesAndAuth(ctx, nil, image.AuthResolver(cli), imageName)
 	if err != nil {
 		return err
 	}
@@ -71,13 +81,15 @@ func runSignImage(cli command.Cli, imageName string) error {
 	}
 	requestPrivilege := command.RegistryAuthenticationPrivilegedFunc(cli, imgRefAndAuth.RepoInfo().Index, "push")
 	target, err := createTarget(notaryRepo, imgRefAndAuth.Tag())
-	if err != nil {
+	if err != nil || options.local {
 		switch err := err.(type) {
-		case client.ErrNoSuchTarget, client.ErrRepositoryNotExist:
+		// If the error is nil then the local flag is set
+		case client.ErrNoSuchTarget, client.ErrRepositoryNotExist, nil:
 			// Fail fast if the image doesn't exist locally
 			if err := checkLocalImageExistence(ctx, cli, imageName); err != nil {
 				return err
 			}
+			fmt.Fprintf(cli.Err(), "Signing and pushing trust data for local image %s, may overwrite remote trust data\n", imageName)
 			return image.TrustedPush(ctx, cli, imgRefAndAuth.RepoInfo(), imgRefAndAuth.Reference(), *imgRefAndAuth.AuthConfig(), requestPrivilege)
 		default:
 			return err
@@ -164,7 +176,7 @@ func getExistingSignatureInfoForReleasedTag(notaryRepo client.Repository, tag st
 func prettyPrintExistingSignatureInfo(out io.Writer, existingSigInfo trustTagRow) {
 	sort.Strings(existingSigInfo.Signers)
 	joinedSigners := strings.Join(existingSigInfo.Signers, ", ")
-	fmt.Fprintf(out, "Existing signatures for tag %s digest %s from:\n%s\n", existingSigInfo.TagName, existingSigInfo.HashHex, joinedSigners)
+	fmt.Fprintf(out, "Existing signatures for tag %s digest %s from:\n%s\n", existingSigInfo.SignedTag, existingSigInfo.Digest, joinedSigners)
 }
 
 func initNotaryRepoWithSigners(notaryRepo client.Repository, newSigner data.RoleName) error {
@@ -231,8 +243,5 @@ func addStagedSigner(notaryRepo client.Repository, newSigner data.RoleName, sign
 	if err := notaryRepo.AddDelegationRoleAndKeys(trust.ReleasesRole, signerKeys); err != nil {
 		return err
 	}
-	if err := notaryRepo.AddDelegationPaths(trust.ReleasesRole, []string{""}); err != nil {
-		return err
-	}
-	return nil
+	return notaryRepo.AddDelegationPaths(trust.ReleasesRole, []string{""})
 }
