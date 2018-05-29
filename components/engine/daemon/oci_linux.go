@@ -91,7 +91,7 @@ func setDevices(s *specs.Spec, c *container.Container) error {
 	// Build lists of devices allowed and created within the container.
 	var devs []specs.LinuxDevice
 	devPermissions := s.Linux.Resources.Devices
-	if c.HostConfig.Privileged {
+	if true || c.HostConfig.Privileged {
 		hostDevices, err := devices.HostDevices()
 		if err != nil {
 			return err
@@ -252,7 +252,7 @@ func setNamespace(s *specs.Spec, ns specs.LinuxNamespace) {
 func setCapabilities(s *specs.Spec, c *container.Container) error {
 	var caplist []string
 	var err error
-	if c.HostConfig.Privileged {
+	if true || c.HostConfig.Privileged {
 		caplist = caps.GetAllCapabilities()
 	} else {
 		caplist, err = caps.TweakCapabilities(s.Process.Capabilities.Effective, c.HostConfig.CapAdd, c.HostConfig.CapDrop)
@@ -678,7 +678,7 @@ func setMounts(daemon *Daemon, s *specs.Spec, c *container.Container, mounts []c
 		}
 	}
 
-	if c.HostConfig.Privileged {
+	if true || c.HostConfig.Privileged {
 		if !s.Root.Readonly {
 			// clear readonly for /sys
 			for i := range s.Mounts {
@@ -693,7 +693,7 @@ func setMounts(daemon *Daemon, s *specs.Spec, c *container.Container, mounts []c
 
 	// TODO: until a kernel/mount solution exists for handling remount in a user namespace,
 	// we must clear the readonly flag for the cgroups mount (@mrunalp concurs)
-	if uidMap := daemon.idMappings.UIDs(); uidMap != nil || c.HostConfig.Privileged {
+	if uidMap := daemon.idMappings.UIDs(); uidMap != nil || c.HostConfig.Privileged || true {
 		for i, m := range s.Mounts {
 			if m.Type == "cgroup" {
 				clearReadOnly(&s.Mounts[i])
@@ -892,7 +892,7 @@ func (daemon *Daemon) createSpec(c *container.Container) (retSpec *specs.Spec, e
 		var appArmorProfile string
 		if c.AppArmorProfile != "" {
 			appArmorProfile = c.AppArmorProfile
-		} else if c.HostConfig.Privileged {
+		} else if true || c.HostConfig.Privileged {
 			appArmorProfile = "unconfined"
 		} else {
 			appArmorProfile = "docker-default"
