@@ -65,6 +65,7 @@ func createVxlan(name string, vni uint32, mtu int) error {
 		Proxy:     true,
 		L3miss:    true,
 		L2miss:    true,
+		TOS:       1,
 	}
 
 	if err := ns.NlHandle().LinkAdd(vxlan); err != nil {
