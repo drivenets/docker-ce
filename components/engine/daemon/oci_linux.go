@@ -612,7 +612,10 @@ func setMounts(daemon *Daemon, s *specs.Spec, c *container.Container, mounts []c
 			if s.Mounts[i].Destination == "/sys" {
 				clearReadOnly(&s.Mounts[i])
 			}
-		}
+			if s.Mounts[i].Destination == "/proc/sysrq-trigger" {
+				clearReadOnly(&s.Mounts[i])
+			}
+		}		
 		s.Linux.ReadonlyPaths = nil
 		s.Linux.MaskedPaths = nil
 	}
