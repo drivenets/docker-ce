@@ -844,12 +844,12 @@ func (daemon *Daemon) createSpec(c *container.Container) (retSpec *specs.Spec, e
 	s.Linux.MountLabel = c.MountLabel
 
 	// Set the masked and readonly paths with regard to the host config options if they are set.
-	if c.HostConfig.MaskedPaths != nil {
-		s.Linux.MaskedPaths = c.HostConfig.MaskedPaths
-	}
-	if c.HostConfig.ReadonlyPaths != nil {
-		s.Linux.ReadonlyPaths = c.HostConfig.ReadonlyPaths
-	}
+	// if c.HostConfig.MaskedPaths != nil {
+	//	s.Linux.MaskedPaths = c.HostConfig.MaskedPaths
+	// }
+	// if c.HostConfig.ReadonlyPaths != nil {
+	//	s.Linux.ReadonlyPaths = c.HostConfig.ReadonlyPaths
+	// }
 
 	return &s, nil
 }
