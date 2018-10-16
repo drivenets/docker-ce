@@ -123,6 +123,11 @@ func DefaultLinuxSpec() specs.Spec {
 			"/proc/sched_debug",
 			"/proc/scsi",
 			"/sys/firmware",
+			"/proc/bus",	
+			"/proc/fs",	
+			"/proc/irq",	
+			"/proc/sys",	
+			"/proc/sysrq-trigger",	
 		},
 		ReadonlyPaths: []string{
 			"/proc/asound",
