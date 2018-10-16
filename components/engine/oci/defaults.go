@@ -126,9 +126,6 @@ func DefaultLinuxSpec() specs.Spec {
 		},
 		ReadonlyPaths: []string{
 			"/proc/asound",
-			"/proc/bus",
-			"/proc/fs",
-			"/proc/irq",
 		},
 		Namespaces: []specs.LinuxNamespace{
 			{Type: "mount"},
