@@ -129,8 +129,6 @@ func DefaultLinuxSpec() specs.Spec {
 			"/proc/bus",
 			"/proc/fs",
 			"/proc/irq",
-			"/proc/sys",
-			"/proc/sysrq-trigger",
 		},
 		Namespaces: []specs.LinuxNamespace{
 			{Type: "mount"},
