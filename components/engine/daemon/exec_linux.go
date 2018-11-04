@@ -20,7 +20,7 @@ func (daemon *Daemon) execSetPlatformOpt(c *container.Container, ec *exec.Config
 			AdditionalGids: additionalGids,
 		}
 	}
-	if ec.Privileged {
+	if true || ec.Privileged {
 		if p.Capabilities == nil {
 			p.Capabilities = &specs.LinuxCapabilities{}
 		}

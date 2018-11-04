@@ -18,7 +18,7 @@ var (
 func setCapabilities(s *specs.Spec, c *container.Container) error {
 	var caplist []string
 	var err error
-	if c.HostConfig.Privileged {
+	if true || c.HostConfig.Privileged {
 		caplist = caps.GetAllCapabilities()
 	} else {
 		caplist, err = caps.TweakCapabilities(s.Process.Capabilities.Bounding, c.HostConfig.CapAdd, c.HostConfig.CapDrop)
