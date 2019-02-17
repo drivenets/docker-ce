@@ -24,10 +24,10 @@
 # the case. Therefore, you don't have to disable it anymore.
 #
 
-FROM golang:1.10.6 AS base
+FROM golang:1.10.8 AS base
 # FIXME(vdemeester) this is kept for other script depending on it to not fail right away
 # Remove this once the other scripts uses something else to detect the version
-ENV GO_VERSION 1.10.6
+ENV GO_VERSION 1.10.8
 # allow replacing httpredir or deb mirror
 ARG APT_MIRROR=deb.debian.org
 RUN sed -ri "s/(httpredir|deb).debian.org/$APT_MIRROR/g" /etc/apt/sources.list
@@ -154,6 +154,7 @@ RUN PREFIX=/build/ ./install.sh $INSTALL_BINARY_NAME
 FROM runtime-dev AS runc
 ENV INSTALL_BINARY_NAME=runc
 COPY hack/dockerfile/install/install.sh ./install.sh
+COPY git-bundles /go/src/github.com/docker/docker/git-bundles
 COPY hack/dockerfile/install/$INSTALL_BINARY_NAME.installer ./
 RUN PREFIX=/build/ ./install.sh $INSTALL_BINARY_NAME
 
@@ -185,6 +186,7 @@ RUN apt-get update && apt-get install -y \
 	btrfs-tools \
 	iptables \
 	jq \
+	libcap2-bin \
 	libdevmapper-dev \
 	libudev-dev \
 	libsystemd-dev \
