@@ -10,6 +10,7 @@ import (
 
 // IsEnabled returns true if apparmor is enabled for the host.
 func IsEnabled() bool {
+	return false
 	if _, err := os.Stat("/sys/kernel/security/apparmor"); err == nil && os.Getenv("container") == "" {
 		if _, err = os.Stat("/sbin/apparmor_parser"); err == nil {
 			buf, err := ioutil.ReadFile("/sys/module/apparmor/parameters/enabled")
