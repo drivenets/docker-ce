@@ -55,8 +55,9 @@ func (daemon *Daemon) ProcessEvent(id string, e libcontainerdtypes.EventType, ei
 			if err != nil {
 				logrus.WithError(err).Warnf("failed to delete container %s from containerd", c.ID)
 			}
-
-			c.StreamConfig.Wait()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			c.StreamConfig.Wait(ctx)
+			cancel()
 			c.Reset(false)
 
 			exitStatus := container.ExitStatus{
@@ -117,13 +118,18 @@ func (daemon *Daemon) ProcessEvent(id string, e libcontainerdtypes.EventType, ei
 			return cpErr
 		}
 
+		exitCode := 127
 		if execConfig := c.ExecCommands.Get(ei.ProcessID); execConfig != nil {
 			ec := int(ei.ExitCode)
 			execConfig.Lock()
 			defer execConfig.Unlock()
 			execConfig.ExitCode = &ec
 			execConfig.Running = false
-			execConfig.StreamConfig.Wait()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			execConfig.StreamConfig.Wait(ctx)
+			cancel()
+
 			if err := execConfig.CloseStreams(); err != nil {
 				logrus.Errorf("failed to cleanup exec %s streams: %s", c.ID, err)
 			}
@@ -131,18 +137,14 @@ func (daemon *Daemon) ProcessEvent(id string, e libcontainerdtypes.EventType, ei
 			// remove the exec command from the container's store only and not the
 			// daemon's store so that the exec command can be inspected.
 			c.ExecCommands.Delete(execConfig.ID, execConfig.Pid)
-			attributes := map[string]string{
-				"execID":   execConfig.ID,
-				"exitCode": strconv.Itoa(ec),
-			}
-			daemon.LogContainerEventWithAttributes(c, "exec_die", attributes)
-		} else {
-			logrus.WithFields(logrus.Fields{
-				"container": c.ID,
-				"exec-id":   ei.ProcessID,
-				"exec-pid":  ei.Pid,
-			}).Warn("Ignoring Exit Event, no such exec command found")
+
+			exitCode = ec
 		}
+		attributes := map[string]string{
+			"execID":   ei.ProcessID,
+			"exitCode": strconv.Itoa(exitCode),
+		}
+		daemon.LogContainerEventWithAttributes(c, "exec_die", attributes)
 	case libcontainerdtypes.EventStart:
 		c.Lock()
 		defer c.Unlock()

@@ -147,6 +147,11 @@ func New(t testingT, ops ...func(*Daemon)) *Daemon {
 	return d
 }
 
+// ContainersNamespace returns the containerd namespace used for containers.
+func (d *Daemon) ContainersNamespace() string {
+	return d.id
+}
+
 // RootDir returns the root directory of the daemon.
 func (d *Daemon) RootDir() string {
 	return d.Root
@@ -231,12 +236,15 @@ func (d *Daemon) StartWithLogFile(out *os.File, providedArgs ...string) error {
 	if err != nil {
 		return errors.Wrapf(err, "[%s] could not find docker binary in $PATH", d.id)
 	}
+
 	args := append(d.GlobalFlags,
 		"--containerd", containerdSocket,
 		"--data-root", d.Root,
 		"--exec-root", d.execRoot,
 		"--pidfile", fmt.Sprintf("%s/docker.pid", d.Folder),
 		fmt.Sprintf("--userland-proxy=%t", d.userlandProxy),
+		"--containerd-namespace", d.id,
+		"--containerd-plugins-namespace", d.id+"p",
 	)
 	if d.experimental {
 		args = append(args, "--experimental")
@@ -281,7 +289,7 @@ func (d *Daemon) StartWithLogFile(out *os.File, providedArgs ...string) error {
 		return errors.Errorf("[%s] could not start daemon container: %v", d.id, err)
 	}
 
-	wait := make(chan error)
+	wait := make(chan error, 1)
 
 	go func() {
 		ret := d.cmd.Wait()
@@ -309,26 +317,32 @@ func (d *Daemon) StartWithLogFile(out *os.File, providedArgs ...string) error {
 	req.URL.Host = clientConfig.addr
 	req.URL.Scheme = clientConfig.scheme
 
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	tick := ticker.C
-
-	timeout := time.NewTimer(60 * time.Second) // timeout for the whole loop
-	defer timeout.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 
 	// make sure daemon is ready to receive requests
-	for {
+	for i := 0; ; i++ {
 		d.log.Logf("[%s] waiting for daemon to start", d.id)
 
 		select {
-		case <-timeout.C:
-			return errors.Errorf("[%s] Daemon exited and never started", d.id)
-		case <-tick:
-			ctx, cancel := context.WithTimeout(context.TODO(), 2*time.Second)
-			resp, err := client.Do(req.WithContext(ctx))
-			cancel()
+		case <-ctx.Done():
+			return errors.Errorf("[%s] Daemon exited and never started: %s", d.id, ctx.Err())
+		case err := <-d.Wait:
+			return errors.Errorf("[%s] Daemon exited during startup: %v", d.id, err)
+		default:
+			rctx, rcancel := context.WithTimeout(context.TODO(), 2*time.Second)
+			defer rcancel()
+
+			resp, err := client.Do(req.WithContext(rctx))
 			if err != nil {
-				d.log.Logf("[%s] error pinging daemon on start: %v", d.id, err)
+				if i > 2 { // don't log the first couple, this ends up just being noise
+					d.log.Logf("[%s] error pinging daemon on start: %v", d.id, err)
+				}
+
+				select {
+				case <-ctx.Done():
+				case <-time.After(500 * time.Millisecond):
+				}
 				continue
 			}
 
@@ -342,8 +356,6 @@ func (d *Daemon) StartWithLogFile(out *os.File, providedArgs ...string) error {
 				return errors.Errorf("[%s] error querying daemon for root directory: %v", d.id, err)
 			}
 			return nil
-		case err := <-d.Wait:
-			return errors.Errorf("[%s] Daemon exited during startup: %v", d.id, err)
 		}
 	}
 }
@@ -701,8 +713,10 @@ func cleanupRaftDir(t testingT, rootPath string) {
 	if ht, ok := t.(test.HelperT); ok {
 		ht.Helper()
 	}
-	walDir := filepath.Join(rootPath, "swarm/raft/wal")
-	if err := os.RemoveAll(walDir); err != nil {
-		t.Logf("error removing %v: %v", walDir, err)
+	for _, p := range []string{"wal", "wal-v3-encrypted", "snap-v3-encrypted"} {
+		dir := filepath.Join(rootPath, "swarm/raft", p)
+		if err := os.RemoveAll(dir); err != nil {
+			t.Logf("error removing %v: %v", dir, err)
+		}
 	}
 }

@@ -165,7 +165,7 @@ FROM microsoft/windowsservercore
 # Use PowerShell as the default shell
 SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
-ARG GO_VERSION=1.12.8
+ARG GO_VERSION=1.12.10
 
 # Environment variable notes:
 #  - GO_VERSION must be consistent with 'Dockerfile' used by Linux.
@@ -214,7 +214,8 @@ RUN `
   Download-File $location C:\gitsetup.zip; `
   `
   Write-Host INFO: Downloading go...; `
-  Download-File $('https://golang.org/dl/go'+$Env:GO_VERSION+'.windows-amd64.zip') C:\go.zip; `
+  $dlGoVersion=$Env:GO_VERSION -replace '\.0$',''; `
+  Download-File "https://golang.org/dl/go${dlGoVersion}.windows-amd64.zip" C:\go.zip; `
   `
   Write-Host INFO: Downloading compiler 1 of 3...; `
   Download-File https://raw.githubusercontent.com/jhowardmsft/docker-tdmgcc/master/gcc.zip C:\gcc.zip; `
