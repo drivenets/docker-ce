@@ -3,14 +3,12 @@
 package overlay2 // import "github.com/docker/docker/daemon/graphdriver/overlay2"
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -29,7 +27,6 @@ import (
 	"github.com/docker/docker/pkg/locker"
 	"github.com/docker/docker/pkg/mount"
 	"github.com/docker/docker/pkg/parsers"
-	"github.com/docker/docker/pkg/parsers/kernel"
 	"github.com/docker/docker/pkg/system"
 	"github.com/docker/go-units"
 	rsystem "github.com/opencontainers/runc/libcontainer/system"
@@ -134,16 +131,6 @@ func Init(home string, options []string, uidMaps, gidMaps []idtools.IDMap) (grap
 		return nil, err
 	}
 
-	if err := supportsOverlay(); err != nil {
-		return nil, graphdriver.ErrNotSupported
-	}
-
-	// require kernel 4.0.0 to ensure multiple lower dirs are supported
-	v, err := kernel.GetKernelVersion()
-	if err != nil {
-		return nil, err
-	}
-
 	// Perform feature detection on /var/lib/docker/overlay2 if it's an existing directory.
 	// This covers situations where /var/lib/docker/overlay2 is a mount, and on a different
 	// filesystem than /var/lib/docker.
@@ -151,6 +138,11 @@ func Init(home string, options []string, uidMaps, gidMaps []idtools.IDMap) (grap
 	testdir := home
 	if _, err := os.Stat(testdir); os.IsNotExist(err) {
 		testdir = filepath.Dir(testdir)
+	}
+
+	if err := overlayutils.SupportsOverlay(testdir, true); err != nil {
+		logger.Error(err)
+		return nil, graphdriver.ErrNotSupported
 	}
 
 	fsMagic, err := graphdriver.GetFSMagic(testdir)
@@ -161,32 +153,6 @@ func Init(home string, options []string, uidMaps, gidMaps []idtools.IDMap) (grap
 		backingFs = fsName
 	}
 
-	switch fsMagic {
-	case graphdriver.FsMagicAufs, graphdriver.FsMagicEcryptfs, graphdriver.FsMagicNfsFs, graphdriver.FsMagicOverlay, graphdriver.FsMagicZfs:
-		logger.Errorf("'overlay2' is not supported over %s", backingFs)
-		return nil, graphdriver.ErrIncompatibleFS
-	case graphdriver.FsMagicBtrfs:
-		// Support for OverlayFS on BTRFS was added in kernel 4.7
-		// See https://btrfs.wiki.kernel.org/index.php/Changelog
-		if kernel.CompareKernelVersion(*v, kernel.VersionInfo{Kernel: 4, Major: 7, Minor: 0}) < 0 {
-			if !opts.overrideKernelCheck {
-				logger.Errorf("'overlay2' requires kernel 4.7 to use on %s", backingFs)
-				return nil, graphdriver.ErrIncompatibleFS
-			}
-			logger.Warn("Using pre-4.7.0 kernel for overlay2 on btrfs, may require kernel update")
-		}
-	}
-
-	if kernel.CompareKernelVersion(*v, kernel.VersionInfo{Kernel: 4, Major: 0, Minor: 0}) < 0 {
-		if opts.overrideKernelCheck {
-			logger.Warn("Using pre-4.0.0 kernel for overlay2, mount failures may require kernel update")
-		} else {
-			if err := supportsMultipleLowerDir(testdir); err != nil {
-				logger.Debugf("Multiple lower dirs not supported: %v", err)
-				return nil, graphdriver.ErrNotSupported
-			}
-		}
-	}
 	supportsDType, err := fsutils.SupportsDType(testdir)
 	if err != nil {
 		return nil, err
@@ -199,12 +165,7 @@ func Init(home string, options []string, uidMaps, gidMaps []idtools.IDMap) (grap
 		logger.Warn(overlayutils.ErrDTypeNotSupported("overlay2", backingFs))
 	}
 
-	rootUID, rootGID, err := idtools.GetRootUIDGID(uidMaps, gidMaps)
-	if err != nil {
-		return nil, err
-	}
-	// Create the driver home dir
-	if err := idtools.MkdirAllAndChown(path.Join(home, linkDir), 0700, idtools.Identity{UID: rootUID, GID: rootGID}); err != nil {
+	if err := idtools.MkdirAllAndChown(path.Join(home, linkDir), 0701, idtools.CurrentIdentity()); err != nil {
 		return nil, err
 	}
 
@@ -273,27 +234,6 @@ func parseOptions(options []string) (*overlayOptions, error) {
 		}
 	}
 	return o, nil
-}
-
-func supportsOverlay() error {
-	// We can try to modprobe overlay first before looking at
-	// proc/filesystems for when overlay is supported
-	exec.Command("modprobe", "overlay").Run()
-
-	f, err := os.Open("/proc/filesystems")
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		if s.Text() == "nodev\toverlay" {
-			return nil
-		}
-	}
-	logger.Error("'overlay' not found as a supported filesystem on this host. Please ensure kernel is new enough and has overlay support loaded.")
-	return graphdriver.ErrNotSupported
 }
 
 func useNaiveDiff(home string) bool {
@@ -394,11 +334,12 @@ func (d *Driver) create(id, parent string, opts *graphdriver.CreateOpts) (retErr
 		return err
 	}
 	root := idtools.Identity{UID: rootUID, GID: rootGID}
+	current := idtools.CurrentIdentity()
 
-	if err := idtools.MkdirAllAndChown(path.Dir(dir), 0700, root); err != nil {
+	if err := idtools.MkdirAllAndChown(path.Dir(dir), 0701, current); err != nil {
 		return err
 	}
-	if err := idtools.MkdirAndChown(dir, 0700, root); err != nil {
+	if err := idtools.MkdirAndChown(dir, 0701, current); err != nil {
 		return err
 	}
 

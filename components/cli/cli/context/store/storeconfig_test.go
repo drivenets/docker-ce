@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"gotest.tools/assert"
+	"gotest.tools/v3/assert"
 )
 
 type testCtx struct{}
@@ -28,4 +28,33 @@ func TestConfigModification(t *testing.T) {
 	assert.Equal(t, &testCtx{}, cfgCopy.contextType())
 	assert.Equal(t, &testEP2{}, cfgCopy.endpointTypes["ep1"]())
 	assert.Equal(t, &testEP3{}, cfgCopy.endpointTypes["ep2"]())
+}
+
+func TestValidFilePaths(t *testing.T) {
+	paths := map[string]bool{
+		"tls/_/../../something":        false,
+		"tls/../../something":          false,
+		"../../something":              false,
+		"/tls/absolute/unix/path":      false,
+		`C:\tls\absolute\windows\path`: false,
+		"C:/tls/absolute/windows/path": false,
+		"tls/kubernetes/key.pem":       true,
+	}
+	for p, expectedValid := range paths {
+		err := isValidFilePath(p)
+		assert.Equal(t, err == nil, expectedValid, "%q should report valid as: %v", p, expectedValid)
+	}
+}
+
+func TestValidateContextName(t *testing.T) {
+	names := map[string]bool{
+		"../../invalid/escape": false,
+		"/invalid/absolute":    false,
+		`\invalid\windows`:     false,
+		"validname":            true,
+	}
+	for n, expectedValid := range names {
+		err := ValidateContextName(n)
+		assert.Equal(t, err == nil, expectedValid, "%q should report valid as: %v", n, expectedValid)
+	}
 }

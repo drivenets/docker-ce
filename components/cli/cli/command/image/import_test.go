@@ -9,8 +9,8 @@ import (
 	"github.com/docker/cli/internal/test"
 	"github.com/docker/docker/api/types"
 	"github.com/pkg/errors"
-	"gotest.tools/assert"
-	is "gotest.tools/assert/cmp"
+	"gotest.tools/v3/assert"
+	is "gotest.tools/v3/assert/cmp"
 )
 
 func TestNewImportCommandErrors(t *testing.T) {
@@ -81,6 +81,14 @@ func TestNewImportCommandSuccess(t *testing.T) {
 		},
 		{
 			name: "change",
+			args: []string{"--change", "ENV DEBUG=true", "-"},
+			imageImportFunc: func(source types.ImageImportSource, ref string, options types.ImageImportOptions) (io.ReadCloser, error) {
+				assert.Check(t, is.Equal("ENV DEBUG=true", options.Changes[0]))
+				return ioutil.NopCloser(strings.NewReader("")), nil
+			},
+		},
+		{
+			name: "change legacy syntax",
 			args: []string{"--change", "ENV DEBUG true", "-"},
 			imageImportFunc: func(source types.ImageImportSource, ref string, options types.ImageImportOptions) (io.ReadCloser, error) {
 				assert.Check(t, is.Equal("ENV DEBUG true", options.Changes[0]))

@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	containerd_cgroups "github.com/containerd/cgroups"
+	statsV1 "github.com/containerd/cgroups/stats/v1"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/blkiodev"
 	pblkiodev "github.com/docker/docker/api/types/blkiodev"
@@ -193,8 +193,9 @@ func getBlkioWeightDevices(config containertypes.Resources) ([]specs.LinuxWeight
 		}
 		weight := weightDevice.Weight
 		d := specs.LinuxWeightDevice{Weight: &weight}
-		d.Major = int64(unix.Major(stat.Rdev))
-		d.Minor = int64(unix.Minor(stat.Rdev))
+		// The type is 32bit on mips.
+		d.Major = int64(unix.Major(uint64(stat.Rdev))) // nolint: unconvert
+		d.Minor = int64(unix.Minor(uint64(stat.Rdev))) // nolint: unconvert
 		blkioWeightDevices = append(blkioWeightDevices, d)
 	}
 
@@ -264,8 +265,9 @@ func getBlkioThrottleDevices(devs []*blkiodev.ThrottleDevice) ([]specs.LinuxThro
 			return nil, err
 		}
 		d := specs.LinuxThrottleDevice{Rate: d.Rate}
-		d.Major = int64(unix.Major(stat.Rdev))
-		d.Minor = int64(unix.Minor(stat.Rdev))
+		// the type is 32bit on mips
+		d.Major = int64(unix.Major(uint64(stat.Rdev))) // nolint: unconvert
+		d.Minor = int64(unix.Minor(uint64(stat.Rdev))) // nolint: unconvert
 		throttleDevices = append(throttleDevices, d)
 	}
 
@@ -965,11 +967,11 @@ func initBridgeDriver(controller libnetwork.NetworkController, config *config.Co
 	}
 
 	if config.BridgeConfig.IP != "" {
-		ipamV4Conf.PreferredPool = config.BridgeConfig.IP
-		ip, _, err := net.ParseCIDR(config.BridgeConfig.IP)
+		ip, ipNet, err := net.ParseCIDR(config.BridgeConfig.IP)
 		if err != nil {
 			return err
 		}
+		ipamV4Conf.PreferredPool = ipNet.String()
 		ipamV4Conf.Gateway = ip.String()
 	} else if bridgeName == bridge.DefaultBridgeName && ipamV4Conf.PreferredPool != "" {
 		logrus.Infof("Default bridge (%s) is assigned with an IP address %s. Daemon option --bip can be used to set a preferred IP address", bridgeName, ipamV4Conf.PreferredPool)
@@ -1174,16 +1176,37 @@ func setupRemappedRoot(config *config.Config) (*idtools.IdentityMapping, error) 
 		// update remapped root setting now that we have resolved them to actual names
 		config.RemappedRoot = fmt.Sprintf("%s:%s", username, groupname)
 
+		// try with username:groupname, uid:groupname, username:gid, uid:gid,
+		// but keep the original error message (err)
 		mappings, err := idtools.NewIdentityMapping(username, groupname)
-		if err != nil {
+		if err == nil {
+			return mappings, nil
+		}
+		user, lookupErr := idtools.LookupUser(username)
+		if lookupErr != nil {
 			return nil, errors.Wrap(err, "Can't create ID mappings")
 		}
-		return mappings, nil
+		logrus.Infof("Can't create ID mappings with username:groupname %s:%s, try uid:groupname %d:%s", username, groupname, user.Uid, groupname)
+		mappings, lookupErr = idtools.NewIdentityMapping(fmt.Sprintf("%d", user.Uid), groupname)
+		if lookupErr == nil {
+			return mappings, nil
+		}
+		logrus.Infof("Can't create ID mappings with uid:groupname %d:%s, try username:gid %s:%d", user.Uid, groupname, username, user.Gid)
+		mappings, lookupErr = idtools.NewIdentityMapping(username, fmt.Sprintf("%d", user.Gid))
+		if lookupErr == nil {
+			return mappings, nil
+		}
+		logrus.Infof("Can't create ID mappings with username:gid %s:%d, try uid:gid %d:%d", username, user.Gid, user.Uid, user.Gid)
+		mappings, lookupErr = idtools.NewIdentityMapping(fmt.Sprintf("%d", user.Uid), fmt.Sprintf("%d", user.Gid))
+		if lookupErr == nil {
+			return mappings, nil
+		}
+		return nil, errors.Wrap(err, "Can't create ID mappings")
 	}
 	return &idtools.IdentityMapping{}, nil
 }
 
-func setupDaemonRoot(config *config.Config, rootDir string, rootIdentity idtools.Identity) error {
+func setupDaemonRoot(config *config.Config, rootDir string, remappedRoot idtools.Identity) error {
 	config.Root = rootDir
 	// the docker root metadata directory needs to have execute permissions for all users (g+x,o+x)
 	// so that syscalls executing as non-root, operating on subdirectories of the graph root
@@ -1208,10 +1231,16 @@ func setupDaemonRoot(config *config.Config, rootDir string, rootIdentity idtools
 	// a new subdirectory with ownership set to the remapped uid/gid (so as to allow
 	// `chdir()` to work for containers namespaced to that uid/gid)
 	if config.RemappedRoot != "" {
-		config.Root = filepath.Join(rootDir, fmt.Sprintf("%d.%d", rootIdentity.UID, rootIdentity.GID))
+		id := idtools.CurrentIdentity()
+		// First make sure the current root dir has the correct perms.
+		if err := idtools.MkdirAllAndChown(config.Root, 0701, id); err != nil {
+			return errors.Wrapf(err, "could not create or set daemon root permissions: %s", config.Root)
+		}
+
+		config.Root = filepath.Join(rootDir, fmt.Sprintf("%d.%d", remappedRoot.UID, remappedRoot.GID))
 		logrus.Debugf("Creating user namespaced daemon root: %s", config.Root)
 		// Create the root directory if it doesn't exist
-		if err := idtools.MkdirAllAndChown(config.Root, 0700, rootIdentity); err != nil {
+		if err := idtools.MkdirAllAndChown(config.Root, 0701, id); err != nil {
 			return fmt.Errorf("Cannot create daemon root: %s: %v", config.Root, err)
 		}
 		// we also need to verify that any pre-existing directories in the path to
@@ -1224,7 +1253,7 @@ func setupDaemonRoot(config *config.Config, rootDir string, rootIdentity idtools
 			if dirPath == "/" {
 				break
 			}
-			if !idtools.CanAccess(dirPath, rootIdentity) {
+			if !idtools.CanAccess(dirPath, remappedRoot) {
 				return fmt.Errorf("a subdirectory in your graphroot path (%s) restricts access to the remapped root uid/gid; please fix by allowing 'o+x' permissions on existing directories", config.Root)
 			}
 		}
@@ -1347,7 +1376,7 @@ func (daemon *Daemon) conditionalUnmountOnCleanup(container *container.Container
 	return daemon.Unmount(container)
 }
 
-func copyBlkioEntry(entries []*containerd_cgroups.BlkIOEntry) []types.BlkioStatEntry {
+func copyBlkioEntry(entries []*statsV1.BlkIOEntry) []types.BlkioStatEntry {
 	out := make([]types.BlkioStatEntry, len(entries))
 	for i, re := range entries {
 		out[i] = types.BlkioStatEntry{

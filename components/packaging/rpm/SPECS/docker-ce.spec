@@ -1,5 +1,7 @@
 %global debug_package %{nil}
 
+# BTRFS is enabled by default, but can be disabled by defining _without_btrfs
+%{!?_with_btrfs: %{!?_without_btrfs: %define _with_btrfs 1}}
 
 Name: docker-ce
 Version: %{_version}
@@ -19,7 +21,11 @@ Requires: docker-ce-cli
 Requires: container-selinux >= 2:2.74
 Requires: libseccomp >= 2.3
 Requires: systemd
+%if 0%{?rhel} >= 8
+Requires: ( iptables or nftables )
+%else
 Requires: iptables
+%endif
 Requires: libcgroup
 Requires: containerd.io >= 1.2.2-3
 Requires: tar
@@ -29,7 +35,7 @@ Requires: xz
 Requires: device-mapper-libs >= 1.02.90-1
 
 BuildRequires: bash
-BuildRequires: btrfs-progs-devel
+%{?_with_btrfs:BuildRequires: btrfs-progs-devel}
 BuildRequires: ca-certificates
 BuildRequires: cmake
 BuildRequires: device-mapper-devel
@@ -79,7 +85,7 @@ export DOCKER_GITCOMMIT=%{_gitcommit}
 mkdir -p /go/src/github.com/docker
 ln -s /root/rpmbuild/BUILD/src/engine /go/src/github.com/docker/docker
 
-pushd engine
+pushd /root/rpmbuild/BUILD/src/engine
 for component in tini "proxy dynamic";do
     TMP_GOPATH="/go" hack/dockerfile/install/install.sh $component
 done
@@ -103,16 +109,12 @@ install -D -p -m 755 /usr/local/bin/docker-init $RPM_BUILD_ROOT/%{_bindir}/docke
 install -D -m 0644 %{_topdir}/SOURCES/docker.service $RPM_BUILD_ROOT/%{_unitdir}/docker.service
 install -D -m 0644 %{_topdir}/SOURCES/docker.socket $RPM_BUILD_ROOT/%{_unitdir}/docker.socket
 
-# install json for docker engine activate / upgrade
-install -D -m 0644 %{_topdir}/SOURCES/distribution_based_engine.json $RPM_BUILD_ROOT/var/lib/docker-engine/distribution_based_engine.json
-
 %files
 /%{_bindir}/dockerd
 /%{_bindir}/docker-proxy
 /%{_bindir}/docker-init
 /%{_unitdir}/docker.service
 /%{_unitdir}/docker.socket
-/var/lib/docker-engine/distribution_based_engine.json
 
 %post
 %systemd_post docker.service

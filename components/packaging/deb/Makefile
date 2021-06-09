@@ -6,7 +6,7 @@ PLUGINS_DIR:=$(realpath $(CURDIR)/../plugins)
 GITCOMMIT?=$(shell cd $(CLI_DIR) && git rev-parse --short HEAD)
 STATIC_VERSION:=$(shell ../static/gen-static-ver $(ENGINE_DIR) $(VERSION))
 GO_BASE_IMAGE=golang
-GO_IMAGE=$(GO_BASE_IMAGE):$(GO_VERSION)-stretch
+GO_IMAGE=$(GO_BASE_IMAGE):$(GO_VERSION)-buster
 DEB_VERSION=$(shell ./gen-deb-ver $(CLI_DIR) "$(VERSION)")
 CHOWN:=docker run --rm -v $(CURDIR):/v -w /v alpine chown
 EPOCH?=5
@@ -16,7 +16,8 @@ ifdef BUILD_IMAGE
 endif
 
 COMMON_FILES=common
-BUILD?=docker build \
+BUILD?=DOCKER_BUILDKIT=1 \
+	docker build \
 	$(BUILD_IMAGE_FLAG) \
 	--build-arg GO_IMAGE=$(GO_IMAGE) \
 	--build-arg COMMON_FILES=$(COMMON_FILES) \
@@ -34,8 +35,10 @@ RUN=docker run --rm -i \
 	$(RUN_FLAGS) \
 	debbuild-$@/$(ARCH)
 
-SOURCE_FILES=engine-image cli.tgz engine.tgz docker.service docker.socket distribution_based_engine.json plugin-installers.tgz
-SOURCES=$(addprefix sources/, $(SOURCE_FILES))
+DEBIAN_VERSIONS ?= debian-stretch debian-buster
+UBUNTU_VERSIONS ?= ubuntu-xenial ubuntu-bionic ubuntu-focal
+RASPBIAN_VERSIONS ?= raspbian-stretch raspbian-buster
+DISTROS := $(DEBIAN_VERSIONS) $(UBUNTU_VERSIONS) $(RASPBIAN_VERSIONS)
 
 .PHONY: help
 help: ## show make targets
@@ -47,41 +50,22 @@ clean: ## remove build artifacts
 	$(RM) -r debbuild
 	[ ! -d sources ] || $(CHOWN) -R $(shell id -u):$(shell id -g) sources
 	$(RM) -r sources
-	$(RM) engine-image
-
-engine-$(ARCH).tar:
-	$(MAKE) -C ../image image-linux
-	docker save -o $@ $$(cat ../image/image-linux)
 
 .PHONY: deb
-deb: ubuntu debian raspbian ## build all deb packages
+deb: ubuntu debian ## build all deb packages except for raspbian
 
 .PHONY: ubuntu
-ubuntu: ubuntu-bionic ubuntu-xenial ## build all ubuntu deb packages
+ubuntu: $(UBUNTU_VERSIONS) ## build all ubuntu deb packages
 
 .PHONY: debian
-debian: debian-stretch debian-buster ## build all debian deb packages
+debian: $(DEBIAN_VERSIONS) ## build all debian deb packages
 
 .PHONY: raspbian
-raspbian: raspbian-stretch raspbian-buster ## build all raspbian deb packages
+raspbian: $(RASPBIAN_VERSIONS) ## build all raspbian deb packages
 
-.PHONY: ubuntu-%
-## build ubuntu deb packages
-ubuntu-%: $(SOURCES)
-	$(BUILD)
-	$(RUN)
-	$(CHOWN) -R $(shell id -u):$(shell id -g) debbuild/$@
-
-.PHONY: debian-%
-## build debian deb packages
-debian-%: $(SOURCES)
-	$(BUILD)
-	$(RUN)
-	$(CHOWN) -R $(shell id -u):$(shell id -g) debbuild/$@
-
-.PHONY: raspbian-%
-## build raspbian deb packages
-raspbian-%: $(SOURCES)
+.PHONY: $(DISTROS)
+$(DISTROS): sources/cli.tgz sources/engine.tgz sources/docker.service sources/docker.socket sources/plugin-installers.tgz
+	@echo "== Building packages for $@ =="
 	$(BUILD)
 	$(RUN)
 	$(CHOWN) -R $(shell id -u):$(shell id -g) debbuild/$@
@@ -109,18 +93,6 @@ sources/docker.service: ../systemd/docker.service
 sources/docker.socket: ../systemd/docker.socket
 	mkdir -p $(@D)
 	cp $< $@
-
-# TODO: Figure out how to decouple this
-# TODO: These might just end up being static files that are hardcoded
-# TODO: FROM HERE <=====================
-sources/distribution_based_engine.json: sources/engine-image
-	mkdir -p $(@D)
-	echo '{"platform":"Docker Engine - Community","engine_image":"engine-community","containerd_min_version":"1.2.0-beta.1","runtime":"host_install"}' > $@
-
-sources/engine-image:
-	mkdir -p $(@D)
-	echo "docker.io/dockereng/engine-community:$(STATIC_VERSION)" > $@
-# TODO: TO HERE <=====================
 
 sources/plugin-installers.tgz: $(wildcard ../plugins/*)
 	docker run --rm -i -w /v \

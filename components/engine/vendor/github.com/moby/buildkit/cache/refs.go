@@ -123,7 +123,10 @@ func (cr *cacheRecord) Size(ctx context.Context) (int64, error) {
 		cr.mu.Unlock()
 		return usage.Size, nil
 	})
-	return s.(int64), err
+	if err != nil {
+		return 0, err
+	}
+	return s.(int64), nil
 }
 
 func (cr *cacheRecord) Parent() ImmutableRef {
@@ -185,7 +188,10 @@ func (cr *cacheRecord) Mount(ctx context.Context, readonly bool) (snapshot.Mount
 func (cr *cacheRecord) remove(ctx context.Context, removeSnapshot bool) error {
 	delete(cr.cm.records, cr.ID())
 	if cr.parent != nil {
-		if err := cr.parent.release(ctx); err != nil {
+		cr.parent.mu.Lock()
+		err := cr.parent.release(ctx)
+		cr.parent.mu.Unlock()
+		if err != nil {
 			return err
 		}
 	}
@@ -398,11 +404,6 @@ func (sr *mutableRef) release(ctx context.Context) error {
 				return nil
 			}
 			if err := sr.equalImmutable.remove(ctx, false); err != nil {
-				return err
-			}
-		}
-		if sr.parent != nil {
-			if err := sr.parent.release(ctx); err != nil {
 				return err
 			}
 		}

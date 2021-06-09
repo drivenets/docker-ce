@@ -76,6 +76,7 @@ type Opt struct {
 	Rootless            bool
 	IdentityMapping     *idtools.IdentityMapping
 	DNSConfig           config.DNSConfig
+	ApparmorProfile     string
 }
 
 // Builder can build using BuildKit backend
@@ -241,7 +242,9 @@ func (b *Builder) Build(ctx context.Context, opt backend.BuildConfig) (*builder.
 		}
 
 		defer func() {
+			b.mu.Lock()
 			delete(b.jobs, buildID)
+			b.mu.Unlock()
 		}()
 	}
 

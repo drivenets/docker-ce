@@ -345,9 +345,10 @@ func Dockerfile2LLB(ctx context.Context, dt []byte, opt ConvertOpt) (*llb.State,
 			opt.copyImage = DefaultCopyImage
 		}
 
-		if err = dispatchOnBuild(d, d.image.Config.OnBuild, opt); err != nil {
+		if err = dispatchOnBuildTriggers(d, d.image.Config.OnBuild, opt); err != nil {
 			return nil, nil, err
 		}
+		d.image.Config.OnBuild = nil
 
 		for _, cmd := range d.commands {
 			if err := dispatch(d, cmd, opt); err != nil {
@@ -586,7 +587,7 @@ type command struct {
 	sources []*dispatchState
 }
 
-func dispatchOnBuild(d *dispatchState, triggers []string, opt dispatchOpt) error {
+func dispatchOnBuildTriggers(d *dispatchState, triggers []string, opt dispatchOpt) error {
 	for _, trigger := range triggers {
 		ast, err := parser.Parse(strings.NewReader(trigger))
 		if err != nil {
@@ -1202,31 +1203,13 @@ func normalizeContextPaths(paths map[string]struct{}) []string {
 		if p == "/" {
 			return nil
 		}
-		pathSlice = append(pathSlice, p)
+		pathSlice = append(pathSlice, path.Join(".", p))
 	}
 
-	toDelete := map[string]struct{}{}
-	for i := range pathSlice {
-		for j := range pathSlice {
-			if i == j {
-				continue
-			}
-			if strings.HasPrefix(pathSlice[j], pathSlice[i]+"/") {
-				delete(paths, pathSlice[j])
-			}
-		}
-	}
-
-	toSort := make([]string, 0, len(paths))
-	for p := range paths {
-		if _, ok := toDelete[p]; !ok {
-			toSort = append(toSort, path.Join(".", p))
-		}
-	}
-	sort.Slice(toSort, func(i, j int) bool {
-		return toSort[i] < toSort[j]
+	sort.Slice(pathSlice, func(i, j int) bool {
+		return pathSlice[i] < pathSlice[j]
 	})
-	return toSort
+	return pathSlice
 }
 
 func proxyEnvFromBuildArgs(args map[string]string) *llb.ProxyEnv {

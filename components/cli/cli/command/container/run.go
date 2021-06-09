@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http/httputil"
-	"os"
 	"runtime"
 	"strings"
 	"syscall"
@@ -113,11 +111,6 @@ func runContainer(dockerCli command.Cli, opts *runOptions, copts *containerOptio
 		config.AttachStdout = false
 		config.AttachStderr = false
 		config.StdinOnce = false
-	}
-
-	// Disable sigProxy when in TTY mode
-	if config.Tty {
-		opts.sigProxy = false
 	}
 
 	// Telling the Windows daemon the initial size of the tty during start makes
@@ -253,10 +246,7 @@ func attachContainer(
 	}
 
 	resp, errAttach := dockerCli.Client().ContainerAttach(ctx, containerID, options)
-	if errAttach != nil && errAttach != httputil.ErrPersistEOF {
-		// ContainerAttach returns an ErrPersistEOF (connection closed)
-		// means server met an error and put it in Hijacked connection
-		// keep the error and read detailed error message from hijacked connection later
+	if errAttach != nil {
 		return nil, errAttach
 	}
 
@@ -289,9 +279,9 @@ func attachContainer(
 func reportError(stderr io.Writer, name string, str string, withHelp bool) {
 	str = strings.TrimSuffix(str, ".") + "."
 	if withHelp {
-		str += "\nSee '" + os.Args[0] + " " + name + " --help'."
+		str += "\nSee 'docker " + name + " --help'."
 	}
-	fmt.Fprintf(stderr, "%s: %s\n", os.Args[0], str)
+	fmt.Fprintln(stderr, "docker:", str)
 }
 
 // if container start fails with 'not found'/'no such' error, return 127

@@ -13,7 +13,7 @@ import (
 	"path"
 	"testing"
 
-	"gotest.tools/assert"
+	"gotest.tools/v3/assert"
 )
 
 type endpoint struct {
@@ -153,8 +153,8 @@ func TestImportTarInvalid(t *testing.T) {
 	tf := path.Join(testDir, "test.context")
 
 	f, err := os.Create(tf)
-	defer f.Close()
 	assert.NilError(t, err)
+	defer f.Close()
 
 	tw := tar.NewWriter(f)
 	hdr := &tar.Header{
@@ -175,7 +175,7 @@ func TestImportTarInvalid(t *testing.T) {
 	var r io.Reader = source
 	s := New(testDir, testCfg)
 	err = Import("tarInvalid", s, r)
-	assert.ErrorContains(t, err, "invalid context: no metadata found")
+	assert.ErrorContains(t, err, "unexpected context file")
 }
 
 func TestImportZip(t *testing.T) {
@@ -186,8 +186,8 @@ func TestImportZip(t *testing.T) {
 	zf := path.Join(testDir, "test.zip")
 
 	f, err := os.Create(zf)
-	defer f.Close()
 	assert.NilError(t, err)
+	defer f.Close()
 	w := zip.NewWriter(f)
 
 	meta, err := json.Marshal(Metadata{
@@ -237,8 +237,8 @@ func TestImportZipInvalid(t *testing.T) {
 	zf := path.Join(testDir, "test.zip")
 
 	f, err := os.Create(zf)
-	defer f.Close()
 	assert.NilError(t, err)
+	defer f.Close()
 	w := zip.NewWriter(f)
 
 	df, err := w.Create("dummy-file")
@@ -254,5 +254,5 @@ func TestImportZipInvalid(t *testing.T) {
 	var r io.Reader = source
 	s := New(testDir, testCfg)
 	err = Import("zipInvalid", s, r)
-	assert.ErrorContains(t, err, "invalid context: no metadata found")
+	assert.ErrorContains(t, err, "unexpected context file")
 }

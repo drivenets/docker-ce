@@ -20,6 +20,7 @@ import (
 	"github.com/docker/docker/oci/caps"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/mount"
+	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/rootless/specconv"
 	volumemounts "github.com/docker/docker/volume/mounts"
 	"github.com/opencontainers/runc/libcontainer/apparmor"
@@ -66,13 +67,14 @@ func WithLibnetwork(daemon *Daemon, c *container.Container) coci.SpecOpts {
 		for _, ns := range s.Linux.Namespaces {
 			if ns.Type == "network" && ns.Path == "" && !c.Config.NetworkDisabled {
 				target := filepath.Join("/proc", strconv.Itoa(os.Getpid()), "exe")
+				shortNetCtlrID := stringid.TruncateID(daemon.netController.ID())
 				s.Hooks.Prestart = append(s.Hooks.Prestart, specs.Hook{
 					Path: target,
 					Args: []string{
 						"libnetwork-setkey",
 						"-exec-root=" + daemon.configStore.GetExecRoot(),
 						c.ID,
-						daemon.netController.ID(),
+						shortNetCtlrID,
 					},
 				})
 			}
@@ -155,7 +157,14 @@ func readUserFile(c *container.Container, p string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.Open(fp)
+	fh, err := os.Open(fp)
+	if err != nil {
+		// This is needed because a nil *os.File is different to a nil
+		// io.ReadCloser and this causes GetExecUser to not detect that the
+		// container file is missing.
+		return nil, err
+	}
+	return fh, nil
 }
 
 func getUser(c *container.Container, username string) (uint32, uint32, []uint32, error) {

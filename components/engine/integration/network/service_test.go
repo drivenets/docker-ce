@@ -193,7 +193,7 @@ func TestDaemonWithBipAndDefaultNetworkPool(t *testing.T) {
 	out, err := c.NetworkInspect(context.Background(), "bridge", types.NetworkInspectOptions{})
 	assert.NilError(t, err)
 	// Make sure BIP IP doesn't get override with new default address pool .
-	assert.Equal(t, out.IPAM.Config[0].Subnet, "172.60.0.1/16")
+	assert.Equal(t, out.IPAM.Config[0].Subnet, "172.60.0.0/16")
 	delInterface(t, defaultNetworkBridge)
 }
 
@@ -416,6 +416,12 @@ func TestServiceWithDefaultAddressPoolInit(t *testing.T) {
 	out, err := cli.NetworkInspect(ctx, overlayID, types.NetworkInspectOptions{Verbose: true})
 	assert.NilError(t, err)
 	t.Logf("%s: NetworkInspect: %+v", t.Name(), out)
+	assert.Assert(t, len(out.IPAM.Config) > 0)
+	assert.Equal(t, out.IPAM.Config[0].Subnet, "20.20.1.0/24")
+
+	// Also inspect ingress network and make sure its in the same subnet
+	out, err = cli.NetworkInspect(ctx, "ingress", types.NetworkInspectOptions{Verbose: true})
+	assert.NilError(t, err)
 	assert.Assert(t, len(out.IPAM.Config) > 0)
 	assert.Equal(t, out.IPAM.Config[0].Subnet, "20.20.0.0/24")
 

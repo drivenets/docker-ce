@@ -748,7 +748,7 @@ func NewDaemon(ctx context.Context, config *config.Config, pluginStore *plugin.S
 	}
 
 	// set up the tmpDir to use a canonical path
-	tmp, err := prepareTempDir(config.Root, rootIDs)
+	tmp, err := prepareTempDir(config.Root)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to get the TempDir under %s: %s", config.Root, err)
 	}
@@ -813,7 +813,7 @@ func NewDaemon(ctx context.Context, config *config.Config, pluginStore *plugin.S
 	}
 
 	daemonRepo := filepath.Join(config.Root, "containers")
-	if err := idtools.MkdirAllAndChown(daemonRepo, 0700, rootIDs); err != nil {
+	if err := idtools.MkdirAllAndChown(daemonRepo, 0701, idtools.CurrentIdentity()); err != nil {
 		return nil, err
 	}
 
@@ -866,6 +866,24 @@ func NewDaemon(ctx context.Context, config *config.Config, pluginStore *plugin.S
 	registerMetricsPluginCallback(d.PluginStore, metricsSockPath)
 
 	gopts := []grpc.DialOption{
+		// WithBlock makes sure that the following containerd request
+		// is reliable.
+		//
+		// NOTE: In one edge case with high load pressure, kernel kills
+		// dockerd, containerd and containerd-shims caused by OOM.
+		// When both dockerd and containerd restart, but containerd
+		// will take time to recover all the existing containers. Before
+		// containerd serving, dockerd will failed with gRPC error.
+		// That bad thing is that restore action will still ignore the
+		// any non-NotFound errors and returns running state for
+		// already stopped container. It is unexpected behavior. And
+		// we need to restart dockerd to make sure that anything is OK.
+		//
+		// It is painful. Add WithBlock can prevent the edge case. And
+		// n common case, the containerd will be serving in shortly.
+		// It is not harm to add WithBlock for containerd connection.
+		grpc.WithBlock(),
+
 		grpc.WithInsecure(),
 		grpc.WithBackoffMaxDelay(3 * time.Second),
 		grpc.WithDialer(dialer.Dialer),
@@ -1271,7 +1289,7 @@ func (daemon *Daemon) Subnets() ([]net.IPNet, []net.IPNet) {
 // prepareTempDir prepares and returns the default directory to use
 // for temporary files.
 // If it doesn't exist, it is created. If it exists, its content is removed.
-func prepareTempDir(rootDir string, rootIdentity idtools.Identity) (string, error) {
+func prepareTempDir(rootDir string) (string, error) {
 	var tmpDir string
 	if tmpDir = os.Getenv("DOCKER_TMPDIR"); tmpDir == "" {
 		tmpDir = filepath.Join(rootDir, "tmp")
@@ -1289,9 +1307,7 @@ func prepareTempDir(rootDir string, rootIdentity idtools.Identity) (string, erro
 			}
 		}
 	}
-	// We don't remove the content of tmpdir if it's not the default,
-	// it may hold things that do not belong to us.
-	return tmpDir, idtools.MkdirAllAndChown(tmpDir, 0700, rootIdentity)
+	return tmpDir, idtools.MkdirAllAndChown(tmpDir, 0700, idtools.CurrentIdentity())
 }
 
 func (daemon *Daemon) setGenericResources(conf *config.Config) error {

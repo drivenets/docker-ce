@@ -208,14 +208,10 @@ func (cli *DaemonCli) start(opts *daemonOptions) (err error) {
 		return errors.Wrap(err, "failed to validate authorization plugin")
 	}
 
-	// TODO: move into startMetricsServer()
-	if cli.Config.MetricsAddress != "" {
-		if !d.HasExperimental() {
-			return errors.Wrap(err, "metrics-addr is only supported when experimental is enabled")
-		}
-		if err := startMetricsServer(cli.Config.MetricsAddress); err != nil {
-			return err
-		}
+	cli.d = d
+
+	if err := cli.startMetricsServer(cli.Config.MetricsAddress); err != nil {
+		return err
 	}
 
 	c, err := createAndStartCluster(cli, d)
@@ -229,8 +225,6 @@ func (cli *DaemonCli) start(opts *daemonOptions) (err error) {
 	d.RestartSwarmContainers()
 
 	logrus.Info("Daemon has completed initialization")
-
-	cli.d = d
 
 	routerOptions, err := newRouterOptions(cli.Config, d)
 	if err != nil {
@@ -320,6 +314,7 @@ func newRouterOptions(config *config.Config, d *daemon.Daemon) (routerOptions, e
 		Rootless:            d.Rootless(),
 		IdentityMapping:     d.IdentityMapping(),
 		DNSConfig:           config.DNSConfig,
+		ApparmorProfile:     daemon.DefaultApparmorProfile(),
 	})
 	if err != nil {
 		return opts, err
@@ -608,11 +603,17 @@ func newAPIServerConfig(cli *DaemonCli) (*apiserver.Config, error) {
 
 func loadListeners(cli *DaemonCli, serverConfig *apiserver.Config) ([]string, error) {
 	var hosts []string
+	seen := make(map[string]struct{}, len(cli.Config.Hosts))
+
 	for i := 0; i < len(cli.Config.Hosts); i++ {
 		var err error
 		if cli.Config.Hosts[i], err = dopts.ParseHost(cli.Config.TLS, honorXDG, cli.Config.Hosts[i]); err != nil {
 			return nil, errors.Wrapf(err, "error parsing -H %s", cli.Config.Hosts[i])
 		}
+		if _, ok := seen[cli.Config.Hosts[i]]; ok {
+			continue
+		}
+		seen[cli.Config.Hosts[i]] = struct{}{}
 
 		protoAddr := cli.Config.Hosts[i]
 		protoAddrParts := strings.SplitN(protoAddr, "://", 2)
