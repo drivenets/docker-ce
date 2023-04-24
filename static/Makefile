@@ -4,7 +4,7 @@ CLI_DIR=$(realpath $(CURDIR)/../src/github.com/docker/cli)
 ENGINE_DIR=$(realpath $(CURDIR)/../src/github.com/docker/docker)
 BUILDX_DIR=$(realpath $(CURDIR)/../src/github.com/docker/buildx)
 
-ENGINE_GITCOMMIT?=$(shell cd $(realpath $(CURDIR)/../src/github.com/docker/docker) && git rev-parse --short HEAD)
+ENGINE_GITCOMMIT?=$(shell cd $(realpath $(CURDIR)/../src/github.com/docker/docker) && cat .git-commit|cut -c 1-7)
 
 GEN_STATIC_VER=$(shell ./gen-static-ver $(CLI_DIR) $(VERSION))
 HASH_CMD=docker run -v $(CURDIR):/sum -w /sum debian:jessie bash hash_files

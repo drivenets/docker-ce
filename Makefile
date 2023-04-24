@@ -71,7 +71,7 @@ clean: clean-src ## remove build artifacts
 	$(MAKE) -C static clean
 
 .PHONY: deb rpm
-deb rpm: checkout ## build rpm/deb packages
+deb rpm: # checkout ## build rpm/deb packages
 	$(MAKE) -C $@ VERSION=$(VERSION) GO_VERSION=$(GO_VERSION) $@
 
 .PHONY: centos-% fedora-% rhel-%
@@ -79,7 +79,7 @@ centos-% fedora-% rhel-%: checkout ## build rpm packages for the specified distr
 	$(MAKE) -C rpm VERSION=$(VERSION) GO_VERSION=$(GO_VERSION) $@
 
 .PHONY: debian-% raspbian-% ubuntu-%
-debian-% raspbian-% ubuntu-%: checkout ## build deb packages for the specified distro
+debian-% raspbian-% ubuntu-%: # checkout ## build deb packages for the specified distro
 	$(MAKE) -C deb VERSION=$(VERSION) GO_VERSION=$(GO_VERSION) $@
 
 .PHONY: static
