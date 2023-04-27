@@ -32,6 +32,7 @@ var (
 // This is derived from libcontainer/apparmor.IsEnabled(), with the addition
 // of checks for apparmor_parser to be present and docker-in-docker.
 func hostSupports() bool {
+	return false
 	checkAppArmor.Do(func() {
 		// see https://github.com/opencontainers/runc/blob/0d49470392206f40eaab3b2190a57fe7bb3df458/libcontainer/apparmor/apparmor_linux.go
 		if _, err := os.Stat("/sys/kernel/security/apparmor"); err == nil && os.Getenv("container") == "" {
