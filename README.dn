@@ -1,4 +1,9 @@
+# git clone https://github.com/docker/docker-ce-packaging.git && cd docker-ce-packaging
+# switch to new branch and update repo to drivenets/docker-ce
 # make DOCKER_ENGINE_REF=tags/v23.0.4 checkout-docker
+# update Makefile to not checkout on every build
+# then
+#
 make DOCKER_CLI_REF=tags/v23.0.4 checkout-cli
 make DOCKER_COMPOSE_REF=tags/v2.17.3 checkout-compose
 make DOCKER_BUILDX_REF=tags/v0.10.4 checkout-buildx
