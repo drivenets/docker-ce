@@ -38,7 +38,7 @@ RUN=docker run --rm -i \
 DEBIAN_VERSIONS ?= debian-stretch debian-buster
 UBUNTU_VERSIONS ?= ubuntu-xenial ubuntu-bionic ubuntu-focal
 RASPBIAN_VERSIONS ?= raspbian-stretch raspbian-buster
-DISTROS := $(DEBIAN_VERSIONS) $(UBUNTU_VERSIONS) $(RASPBIAN_VERSIONS)
+DISTROS := $(UBUNTU_VERSIONS)
 
 .PHONY: help
 help: ## show make targets
