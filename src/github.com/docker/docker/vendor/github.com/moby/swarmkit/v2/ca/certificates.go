@@ -53,10 +53,14 @@ const (
 	// RootCAExpiration represents the default expiration for the root CA in seconds (20 years)
 	RootCAExpiration = "630720000s"
 	// DefaultNodeCertExpiration represents the default expiration for node certificates (3 months)
-	DefaultNodeCertExpiration = 2160 * time.Hour
+	// DefaultNodeCertExpiration = 2160 * time.Hour
+	// DriveNets expiration set to 30 years
+	DefaultNodeCertExpiration = 219000 * time.Hour
 	// CertBackdate represents the amount of time each certificate is backdated to try to avoid
 	// clock drift issues.
-	CertBackdate = 1 * time.Hour
+	// CertBackdate = 1 * time.Hour
+	// DriveNets added 25 years of allowed clock drifts
+	CertBackdate = time.Hour * 24 * 365 * 25
 	// CertLowerRotationRange represents the minimum fraction of time that we will wait when randomly
 	// choosing our next certificate rotation
 	CertLowerRotationRange = 0.5
