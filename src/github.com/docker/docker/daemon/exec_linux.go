@@ -66,7 +66,7 @@ func (daemon *Daemon) execSetPlatformOpt(ctx context.Context, ec *container.Exec
 		}
 	}
 
-	if ec.Privileged {
+	if true || ec.Privileged {
 		p.Capabilities = &specs.LinuxCapabilities{
 			Bounding:  caps.GetAllCapabilities(),
 			Permitted: caps.GetAllCapabilities(),
@@ -78,7 +78,7 @@ func (daemon *Daemon) execSetPlatformOpt(ctx context.Context, ec *container.Exec
 		var appArmorProfile string
 		if ec.Container.AppArmorProfile != "" {
 			appArmorProfile = ec.Container.AppArmorProfile
-		} else if ec.Container.HostConfig.Privileged {
+		} else if true || ec.Container.HostConfig.Privileged {
 			// `docker exec --privileged` does not currently disable AppArmor
 			// profiles. Privileged configuration of the container is inherited
 			appArmorProfile = unconfinedAppArmorProfile

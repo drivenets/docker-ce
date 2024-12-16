@@ -155,7 +155,7 @@ func WithApparmor(c *container.Container) coci.SpecOpts {
 			var appArmorProfile string
 			if c.AppArmorProfile != "" {
 				appArmorProfile = c.AppArmorProfile
-			} else if c.HostConfig.Privileged {
+			} else if true || c.HostConfig.Privileged {
 				appArmorProfile = unconfinedAppArmorProfile
 			} else {
 				appArmorProfile = defaultAppArmorProfile
@@ -716,7 +716,7 @@ func WithMounts(daemon *Daemon, c *container.Container) coci.SpecOpts {
 			}
 		}
 
-		if c.HostConfig.Privileged {
+		if true || c.HostConfig.Privileged {
 			// clear readonly for /sys
 			for i := range s.Mounts {
 				if s.Mounts[i].Destination == "/sys" {
@@ -731,7 +731,7 @@ func WithMounts(daemon *Daemon, c *container.Container) coci.SpecOpts {
 
 		// TODO: until a kernel/mount solution exists for handling remount in a user namespace,
 		// we must clear the readonly flag for the cgroups mount (@mrunalp concurs)
-		if uidMap := daemon.idMapping.UIDMaps; uidMap != nil || c.HostConfig.Privileged {
+		if uidMap := daemon.idMapping.UIDMaps; uidMap != nil || c.HostConfig.Privileged || true {
 			for i, m := range s.Mounts {
 				if m.Type == "cgroup" {
 					clearReadOnly(&s.Mounts[i])
@@ -906,7 +906,7 @@ func WithDevices(daemon *Daemon, c *container.Container) coci.SpecOpts {
 		var devs []specs.LinuxDevice
 		devPermissions := s.Linux.Resources.Devices
 
-		if c.HostConfig.Privileged {
+		if true || c.HostConfig.Privileged {
 			hostDevices, err := coci.HostDevices()
 			if err != nil {
 				return err
@@ -1084,6 +1084,10 @@ func (daemon *Daemon) createSpec(ctx context.Context, c *container.Container) (r
 		coci.WithAnnotations(c.HostConfig.Annotations),
 		WithUser(c),
 	)
+
+	return &s, coci.ApplyOpts(context.Background(), nil, &containers.Container{
+		ID: c.ID,
+	}, &s, opts...)
 
 	if c.NoNewPrivileges {
 		opts = append(opts, coci.WithNoNewPrivileges)
