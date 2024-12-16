@@ -17,7 +17,7 @@ RUN if  [ "$(dpkg-divert --truename /usr/bin/man)" = "/usr/bin/man.REAL" ]; then
     fi
 
 ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y curl devscripts equivs git
+RUN apt-get update && apt-get install -y curl devscripts equivs git libdevmapper-dev
 
 ENV GOPROXY=https://proxy.golang.org|direct
 ENV GO111MODULE=off
